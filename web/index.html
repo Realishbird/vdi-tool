@@ -16,8 +16,8 @@
       <a href="#network" data-view="network">Network</a>
       <a href="#guests" data-view="guests">VMs &amp; containers</a>
       <a href="#deploy" data-view="deploy">Deploy desktops</a>
+      <a href="#bench" data-view="bench">Benchmarks</a>
       <div class="nav-section">Coming next</div>
-      <a class="disabled" title="Step 3">Benchmarks</a>
       <a class="disabled" title="Step 4">Reports</a>
     </nav>
     <div class="sidebar-foot"><span id="foot">…</span><br><a id="update" class="link">Update to latest</a></div>
@@ -87,6 +87,20 @@
         </form>
       </div>
       <div id="batches"></div>
+    </section>
+    <section id="view-bench" class="view hidden">
+      <div class="card form-card" style="margin-top:0">
+        <form id="run-form" class="form">
+          <label>Batch<select name="batch" id="f-rbatch" required></select></label>
+          <label>Workload<select name="profile" id="f-profile"></select></label>
+          <label>Duration (seconds)<input name="duration" type="number" value="120" min="10" max="3600"></label>
+          <label>Ramp-up (seconds)<input name="ramp" type="number" value="0" min="0" max="3600"></label>
+          <div class="form-actions"><button class="btn primary">Start run</button>
+            <span class="hint">Ramp-up spreads the desktop start times, so you can see where performance drops as load builds. Boot storm ignores both numbers.</span></div>
+        </form>
+      </div>
+      <div id="runs"></div>
+      <div id="run-detail"></div>
     </section>
   </main>
 </div>

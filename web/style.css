@@ -85,3 +85,23 @@ details .form { margin-top: 16px; }
 .errs { color: var(--bad); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
 .status-partial, .status-building, .status-deploying, .status-deleting { color: var(--warn); }
 .status-ready { color: var(--ok); } .status-failed, .status-interrupted, .status-delete-incomplete { color: var(--bad); }
+
+.run { margin-top: 14px; cursor: pointer; }
+.run.selected { border-color: var(--accent); }
+.status-running { color: var(--warn); } .status-done { color: var(--ok); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 16px 0; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.tile .label { color: var(--muted); font-size: 12px; }
+.tile .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+.chart { position: relative; }
+.chart h3 { margin: 0 0 2px; font-size: 14px; }
+.chart .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); min-height: 18px; }
+.chart .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .tip { position: absolute; pointer-events: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; white-space: nowrap; z-index: 2; }
+.chart .tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+.chart .nodata { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }

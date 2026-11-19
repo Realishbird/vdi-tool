@@ -9,11 +9,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 
-from . import deploy
+from . import deploy, runs
 from .deploy import state
 from .pve import PVE, PVEError
 
@@ -291,9 +291,83 @@ async def remove_batch(bid: str):
         raise HTTPException(404, "batch not found")
     if b["status"] in ("deploying", "deleting"):
         raise HTTPException(409, f"batch is {b['status']}")
+    act = runs.active()
+    if act and act["batch"] == bid:
+        raise HTTPException(409, "a benchmark is running on this batch")
     b["status"] = "deleting"
     state.save()
     deploy.spawn(deploy.delete_batch(pve, bid))
+    return {"ok": True}
+
+
+# ------------------------------------------------------------- benchmarks
+
+_BLOB = os.urandom(1 << 20)
+
+
+@app.get("/agent/workload.py", response_class=PlainTextResponse)
+async def agent_script():
+    return (ROOT / "agent" / "workload.py").read_text()
+
+
+@app.get("/agent/blob")
+async def agent_blob():
+    """1 MB of incompressible data for the workload's download action."""
+    return Response(_BLOB, media_type="application/octet-stream")
+
+
+class RunReq(BaseModel):
+    batch: str
+    profile: str = "office"
+    duration: int = Field(120, ge=10, le=3600)
+    ramp: int = Field(0, ge=0, le=3600)
+
+
+@app.get("/api/runs")
+async def list_runs():
+    return {"profiles": runs.PROFILES,
+            "runs": sorted((runs.brief(r) for r in runs.runs.values()), key=lambda r: r["created"], reverse=True)}
+
+
+@app.get("/api/runs/{rid}")
+async def get_run(rid: str):
+    r = runs.runs.get(rid)
+    if not r:
+        raise HTTPException(404, "run not found")
+    return r
+
+
+@app.post("/api/runs")
+async def start_run(req: RunReq, request: Request):
+    if req.profile not in runs.PROFILES:
+        raise HTTPException(400, "unknown profile")
+    b = state.data["batches"].get(req.batch)
+    if not b or b["status"] not in ("ready", "partial"):
+        raise HTTPException(400, "batch not found or not ready")
+    if runs.active():
+        raise HTTPException(409, "another run is in progress")
+    r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request))
+    if not r["vms"]:
+        runs.delete(r["id"])
+        raise HTTPException(400, "the batch has no running desktops")
+    deploy.spawn(runs.execute(pve, r))
+    return {"id": r["id"]}
+
+
+@app.post("/api/runs/{rid}/report/{vmid}")
+async def run_report(rid: str, vmid: str, body: dict):
+    runs.report(rid, vmid, body)
+    return {"ok": True}
+
+
+@app.delete("/api/runs/{rid}")
+async def delete_run(rid: str):
+    r = runs.runs.get(rid)
+    if not r:
+        raise HTTPException(404, "run not found")
+    if r["status"] == "running":
+        raise HTTPException(409, "run is in progress")
+    runs.delete(rid)
     return {"ok": True}
 
 

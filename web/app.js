@@ -13,9 +13,9 @@ const meter = (label, used, total, text, progress = false) => {
   return `<div class="meter"><div class="meter-top"><span>${label}</span><span>${text ?? `${bytes(used)} / ${bytes(total)}`} · ${p}%</span></div><div class="bar ${cls}"><span style="width:${p}%"></span></div></div>`;
 };
 const CLONE_OK = new Set(["lvmthin", "zfspool", "rbd", "nfs", "dir", "cifs", "glusterfs", "cephfs"]);
-const TITLES = { overview: "Overview", storage: "Storage", network: "Network", guests: "VMs & containers", deploy: "Deploy desktops" };
+const TITLES = { overview: "Overview", storage: "Storage", network: "Network", guests: "VMs & containers", deploy: "Deploy desktops", bench: "Benchmarks" };
 
-let data = null, dep = null;
+let data = null, dep = null, bench = null, selRun = null, runDetail = null;
 
 function show(view) {
   if (!TITLES[view]) view = "overview";
@@ -116,6 +116,96 @@ function renderDeploy() {
   }).join("") || `<div class="empty">No batches yet.</div>`;
 }
 
+
+// ------------------------------------------------------------ benchmarks
+const C1 = "#3987e5", C2 = "#d95926";  // validated series colours for the dark surface
+const fmt = (v) => (v >= 100 ? Math.round(v) : v >= 10 ? v.toFixed(1) : v.toFixed(2)).toString();
+const niceMax = (m) => { if (m <= 0) return 1; const p = 10 ** Math.floor(Math.log10(m)); return [1, 2, 5, 10].map((k) => k * p).find((k) => k >= m); };
+
+// One measure per chart, shared x axis in seconds. series: [{name, color, points: [[t, v], ...]}]
+function chart(title, unit, series) {
+  series = series.filter((s) => s.points.length);
+  const head = `<h3>${esc(title)} <span class="hint">(${esc(unit)})</span></h3>`;
+  if (!series.length || series[0].points.length < 2) return `<div class="card chart">${head}<div class="nodata">Not enough data yet.</div></div>`;
+  const W = 520, H = 190, L = 44, R = 10, T = 8, B = 24;
+  const ts = series[0].points.map((p) => p[0]), t0 = ts[0], t1 = ts[ts.length - 1] || 1;
+  const max = niceMax(Math.max(...series.flatMap((s) => s.points.map((p) => p[1]))));
+  const x = (t) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R), y = (v) => T + (1 - v / max) * (H - T - B);
+  const grid = [0, 0.5, 1].map((f) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(max * f)}" y2="${y(max * f)}"/><text class="axis" x="${L - 6}" y="${y(max * f) + 4}" text-anchor="end">${fmt(max * f)}</text>`).join("");
+  const xl = [t0, (t0 + t1) / 2, t1].map((t, i) => `<text class="axis" x="${x(t)}" y="${H - 6}" text-anchor="${["start", "middle", "end"][i]}">${Math.round(t)}s</text>`).join("");
+  const lines = series.map((s) => `<polyline fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" points="${s.points.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ")}"/>`).join("");
+  const legend = series.length > 1 ? series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("") : "";
+  const payload = esc(JSON.stringify({ series, L, R, W, t0, t1, unit }));
+  return `<div class="card chart" data-chart="${payload}">${head}<div class="legend">${legend}</div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${grid}${xl}${lines}<line class="cross" y1="${T}" y2="${H - B}" style="display:none"/></svg><div class="tip" style="display:none"></div></div>`;
+}
+
+document.addEventListener("mousemove", (e) => {
+  const el = e.target.closest?.(".chart[data-chart]");
+  document.querySelectorAll(".chart .tip").forEach((t) => { if (!el || t.parentNode !== el) { t.style.display = "none"; t.parentNode.querySelector(".cross").style.display = "none"; } });
+  if (!el) return;
+  const c = JSON.parse(el.dataset.chart), svg = el.querySelector("svg"), box = svg.getBoundingClientRect();
+  const px = ((e.clientX - box.left) / box.width) * c.W;
+  const t = c.t0 + ((px - c.L) / (c.W - c.L - c.R)) * (c.t1 - c.t0);
+  const pts = c.series[0].points; let i = 0;
+  pts.forEach((p, k) => { if (Math.abs(p[0] - t) < Math.abs(pts[i][0] - t)) i = k; });
+  const cx = c.L + ((pts[i][0] - c.t0) / (c.t1 - c.t0 || 1)) * (c.W - c.L - c.R);
+  const cross = el.querySelector(".cross"); cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.style.display = "";
+  const tip = el.querySelector(".tip");
+  tip.innerHTML = `<b>${Math.round(pts[i][0])}s</b><br>` + c.series.map((s) => `<i style="background:${s.color}"></i>${esc(s.name)}: <b>${s.points[i] ? fmt(s.points[i][1]) : "-"}</b> ${esc(c.unit)}`).join("<br>");
+  tip.style.display = "";
+  const er = el.getBoundingClientRect(), left = (cx / c.W) * box.width + (box.left - er.left);
+  tip.style.left = `${Math.min(left + 12, er.width - tip.offsetWidth - 8)}px`; tip.style.top = `${box.top - er.top + 6}px`;
+});
+
+const SUMMARY_LABELS = {
+  desktops: "Desktops", completed: "Completed", failed: "Failed", mean_ms: "Avg action time (ms)", p95_ms: "Worst p95 (ms)",
+  worst_desktop_ms: "Slowest desktop avg (ms)", actions: "Actions done", errors: "Action errors", total_iops: "Total IOPS",
+  iops_per_desktop: "IOPS per desktop", read_lat_ms: "Read latency (ms)", write_lat_ms: "Write latency (ms)", worst_p99_ms: "Worst p99 latency (ms)",
+  total_mb_per_s: "Total hashed (MB/s)", mb_per_s_per_desktop: "Per desktop (MB/s)", mean_boot_s: "Avg boot (s)", p95_boot_s: "p95 boot (s)",
+  all_up_s: "All desktops up (s)", peak_host_cpu: "Peak host CPU (%)",
+};
+const resultText = (profile, r) => !r ? "-" :
+  profile === "office" ? `${r.mean_ms} ms avg · ${r.p95_ms} ms p95 · ${r.actions} actions` :
+  profile === "disk" ? `${r.iops} IOPS · read ${r.read.lat_ms} ms · write ${r.write.lat_ms} ms` :
+  profile === "cpu" ? `${r.mb_per_s} MB/s on ${r.cores} cores` : `${r.boot_s} s to boot`;
+
+function renderBench() {
+  opts($("#f-profile"), Object.entries(bench.profiles));
+  opts($("#f-rbatch"), dep.batches.filter((b) => b.status === "ready" || b.status === "partial").map((b) => [b.id, `${b.prefix}-${b.id} · ${b.count} desktops on ${b.storage}`]));
+  $("#runs").innerHTML = bench.runs.map((r) => {
+    const s = r.summary || {}, c = r.counts, fin = (c.done || 0) + (c.failed || 0), total = Object.values(c).reduce((a, b) => a + b, 0);
+    return `<div class="card run ${r.id === selRun ? "selected" : ""}" data-run="${esc(r.id)}"><div class="batch-head">
+      <div><b>${esc(bench.profiles[r.profile] || r.profile)}</b> <span class="status-${esc(r.status)}">${esc(r.status)}</span>
+        <div class="sub">${esc(r.batch_name)} · ${total} desktops on ${esc(r.storage)} · ${new Date(r.created * 1000).toLocaleString()}${r.profile === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}`}</div></div>
+      <button class="btn small danger" data-del-run="${esc(r.id)}" ${r.status === "running" ? "disabled" : ""}>Delete</button></div>
+      ${r.status === "running" ? meter(Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · "), fin, total, `${fin} of ${total} finished`, true) : ""}
+      ${r.error ? `<div class="errs">${esc(r.error)}</div>` : ""}
+      ${s.completed !== undefined && r.id !== selRun ? `<div class="sub" style="margin-top:8px">${Object.entries(s).filter(([k]) => SUMMARY_LABELS[k] && !["desktops"].includes(k)).slice(0, 5).map(([k, v]) => `${SUMMARY_LABELS[k]}: <b>${v}</b>`).join(" · ")}</div>` : ""}</div>`;
+  }).join("") || `<div class="empty">No runs yet. Deploy a batch, then start a run.</div>`;
+
+  const d = runDetail;
+  if (!d || d.id !== selRun) { $("#run-detail").innerHTML = ""; return; }
+  const smp = d.samples, pts = (k) => smp.filter((s) => s[k] !== undefined).map((s) => [s.t, s[k]]);
+  const lat = Object.entries(d.latency).map(([t, [sum, n]]) => [Number(t), n ? sum / n : 0]).sort((a, b) => a[0] - b[0]);
+  const charts = [
+    d.profile === "office" ? chart("Action response time", "ms", [{ name: "Avg across desktops", color: C1, points: lat }]) : "",
+    chart("Host CPU", "%", [{ name: "Host CPU", color: C1, points: pts("host_cpu") }]),
+    chart("Desktop disk throughput", "MB/s", [{ name: "Read", color: C1, points: pts("diskread") }, { name: "Write", color: C2, points: pts("diskwrite") }]),
+    chart("Desktop network", "MB/s", [{ name: "In", color: C1, points: pts("netin") }, { name: "Out", color: C2, points: pts("netout") }]),
+    chart("Desktop vCPUs busy", "cores", [{ name: "vCPUs busy", color: C1, points: pts("vm_cpu") }]),
+  ].join("");
+  const tiles = Object.entries(d.summary || {}).filter(([k]) => SUMMARY_LABELS[k]).map(([k, v]) => `<div class="tile"><div class="label">${SUMMARY_LABELS[k]}</div><div class="value">${v.toLocaleString()}</div></div>`).join("");
+  const rows = Object.values(d.vms).map((vm) => `<tr><td class="num">${vm.vmid}</td><td><b>${esc(vm.name)}</b></td><td>${esc(vm.node)}</td>
+    <td><span class="status-${vm.status === "done" ? "done" : vm.status === "failed" ? "failed" : "running"}">${esc(vm.status)}</span></td>
+    <td>${vm.error ? `<span class="errs">${esc(vm.error)}</span>` : esc(resultText(d.profile, vm.result))}</td>
+    <td class="num">${vm.io ? `${bytes(vm.io.diskread)} / ${bytes(vm.io.diskwrite)}` : "-"}</td>
+    <td class="num">${vm.io ? `${bytes(vm.io.netin)} / ${bytes(vm.io.netout)}` : "-"}</td></tr>`).join("");
+  $("#run-detail").innerHTML = `<h2>Run ${esc(d.id)}: ${esc(bench.profiles[d.profile] || d.profile)}</h2>
+    ${tiles ? `<div class="tiles">${tiles}</div>` : ""}<div class="charts">${charts}</div>
+    <h2>Per desktop</h2><table class="table"><tr><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th>Result</th><th>Disk read / written</th><th>Net in / out</th></tr>${rows}</table>`;
+}
+
 async function api(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
@@ -146,8 +236,12 @@ async function load() {
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     data = await r.json();
     dep = await api("GET", "/api/deploy");
+    bench = await api("GET", "/api/runs");
+    if (!selRun || !bench.runs.some((r) => r.id === selRun)) selRun = (bench.runs.find((r) => r.status === "running") || bench.runs[0] || {}).id || null;
+    if (selRun && (!runDetail || runDetail.id !== selRun || runDetail.status === "running")) runDetail = await api("GET", `/api/runs/${selRun}`);
     render();
     renderDeploy();
+    if (!document.querySelector(".chart .tip:not([style*=none])")) renderBench();
   } catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
 }
 
@@ -162,9 +256,13 @@ const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
 });
 submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
 submitOnce($("#batch-form"), (f) => api("POST", "/api/batches", formData(f)));
+submitOnce($("#run-form"), async (f) => { selRun = (await api("POST", "/api/runs", formData(f))).id; runDetail = null; });
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
+  const card = e.target.closest(".run");
+  if (card && !t.delRun) { selRun = card.dataset.run; runDetail = null; load(); return; }
   try {
+    if (t.delRun && window.confirm("Delete this run and its results?")) { await api("DELETE", `/api/runs/${t.delRun}`); load(); }
     if (t.delBatch && window.confirm(`Stop and permanently delete every desktop in batch ${t.delBatch}?`)) { await api("DELETE", `/api/batches/${t.delBatch}`); load(); }
     if (t.delTmpl && window.confirm(`Permanently delete template ${t.delTmpl}? Linked clones made from it must be deleted first.`)) { await api("DELETE", `/api/templates/${t.delTmpl}`); load(); }
   } catch (x) { fail(x); }
