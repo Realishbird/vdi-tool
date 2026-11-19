@@ -15,12 +15,12 @@
       <a href="#storage" data-view="storage">Storage</a>
       <a href="#network" data-view="network">Network</a>
       <a href="#guests" data-view="guests">VMs &amp; containers</a>
+      <a href="#deploy" data-view="deploy">Deploy desktops</a>
       <div class="nav-section">Coming next</div>
-      <a class="disabled" title="Step 2">Deploy desktops</a>
       <a class="disabled" title="Step 3">Benchmarks</a>
       <a class="disabled" title="Step 4">Reports</a>
     </nav>
-    <div class="sidebar-foot" id="foot">…</div>
+    <div class="sidebar-foot"><span id="foot">…</span><br><a id="update" class="link">Update to latest</a></div>
   </aside>
 
   <main>
@@ -50,6 +50,43 @@
 
     <section id="view-guests" class="view hidden">
       <table class="table" id="guests-table"></table>
+    </section>
+    <section id="view-deploy" class="view hidden">
+      <h2 class="first">Golden templates</h2>
+      <table class="table" id="templates-table"></table>
+      <details class="card form-card">
+        <summary>Build a Linux template</summary>
+        <form id="tmpl-form" class="form">
+          <label>Image<select name="image" id="f-image"></select></label>
+          <label>Name<input name="name" value="vdi-linux-golden" required></label>
+          <label>Node<select name="node" class="f-node"></select></label>
+          <label>Storage<select name="storage" class="f-storage"></select></label>
+          <label>Bridge<select name="bridge" class="f-bridge"></select></label>
+          <label>Cores<input name="cores" type="number" value="4" min="1"></label>
+          <label>Memory (MB)<input name="memory" type="number" value="4096" min="1024" step="512"></label>
+          <label>Disk (GB)<input name="disk_gb" type="number" value="32" min="8"></label>
+          <label>Password for user "vdi"<input name="password" type="password" required minlength="4"></label>
+          <div class="form-actions"><button class="btn primary">Build template</button>
+            <span class="hint">Needs DHCP and internet on the bridge. Takes roughly 10 minutes.</span></div>
+        </form>
+      </details>
+      <p class="hint">Windows templates come later in this step. Any existing Proxmox template can be used for a batch.</p>
+
+      <h2>Batches</h2>
+      <div class="card form-card">
+        <form id="batch-form" class="form">
+          <label>Template<select name="template" id="f-template" required></select></label>
+          <label>How many<input name="count" type="number" value="10" min="1" max="2000" required></label>
+          <label>Name prefix<input name="prefix" value="vdi" required></label>
+          <label>Storage<select name="storage" id="f-bstorage"></select></label>
+          <label>Cores (blank = template)<input name="cores" type="number" min="1"></label>
+          <label>Memory MB (blank = template)<input name="memory" type="number" min="512" step="512"></label>
+          <label>Parallel clones<input name="concurrency" type="number" value="4" min="1" max="32"></label>
+          <label class="check"><input name="start" type="checkbox" checked> Start after creating</label>
+          <div class="form-actions"><button class="btn primary">Deploy batch</button></div>
+        </form>
+      </div>
+      <div id="batches"></div>
     </section>
   </main>
 </div>

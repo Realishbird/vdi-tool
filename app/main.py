@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 
+from . import deploy
+from .deploy import state
 from .pve import PVE, PVEError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -119,6 +124,191 @@ async def overview():
         "networks": networks,
         "guests": sorted(guests, key=lambda g: g["vmid"]),
     }
+
+
+# ------------------------------------------------------------- cloud-init
+
+def _ci_base(request: Request) -> str:
+    return os.environ.get("VDI_PUBLIC_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
+
+
+@app.get("/ci/{key}/meta-data", response_class=PlainTextResponse)
+async def ci_meta(key: str):
+    return deploy.ci_meta(key)
+
+
+@app.get("/ci/{key}/user-data", response_class=PlainTextResponse)
+async def ci_user(key: str):
+    return deploy.ci_user(key)
+
+
+@app.get("/ci/{key}/vendor-data", response_class=PlainTextResponse)
+async def ci_vendor(key: str):
+    return ""
+
+
+@app.post("/ci/{key}/done")
+async def ci_done(key: str):
+    deploy.ci_done(key)
+    return {"ok": True}
+
+
+# -------------------------------------------------------------- templates
+
+class TemplateReq(BaseModel):
+    image: str = "ubuntu-24.04"
+    name: str = Field("vdi-linux-golden", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,40}$")
+    node: str
+    storage: str
+    bridge: str
+    cores: int = Field(4, ge=1, le=64)
+    memory: int = Field(4096, ge=1024, le=262144)
+    disk_gb: int = Field(32, ge=8, le=1024)
+    password: str = Field(min_length=4, max_length=64)
+
+
+def _public(t: dict) -> dict:
+    return {k: v for k, v in t.items() if k != "password"}
+
+
+@app.get("/api/deploy")
+async def deploy_state():
+    res = await _call(pve.get("/cluster/resources", type="vm"))
+    live = {int(r["vmid"]): r for r in res}
+    templates = {k: _public(t) for k, t in state.data["templates"].items()}
+    for k, t in templates.items():
+        t["exists"] = t["vmid"] in live
+    # Templates made outside the tool can be used for batches too.
+    for vmid, r in live.items():
+        if r.get("template") and str(vmid) not in templates:
+            templates[str(vmid)] = {"vmid": vmid, "name": r.get("name", ""), "node": r["node"],
+                                    "status": "ready", "external": True, "exists": True}
+    batches = []
+    for bid, b in state.data["batches"].items():
+        counts: dict[str, int] = {}
+        for vm in b["vms"]:
+            s = vm["status"]
+            if s in ("created", "running") and vm["vmid"] in live:
+                s = live[vm["vmid"]].get("status", s)
+            counts[s] = counts.get(s, 0) + 1
+        errors = [f"{vm['name']}: {vm['error']}" for vm in b["vms"] if vm.get("error")][:5]
+        batches.append({**{k: v for k, v in b.items() if k != "vms"}, "id": bid,
+                        "count": len(b["vms"]), "counts": counts, "errors": errors,
+                        "first": b["vms"][0]["vmid"], "last": b["vms"][-1]["vmid"]})
+    return {"images": {k: v["label"] for k, v in deploy.IMAGES.items()},
+            "templates": sorted(templates.values(), key=lambda t: t["vmid"]),
+            "batches": sorted(batches, key=lambda b: b["created"], reverse=True)}
+
+
+@app.post("/api/templates")
+async def create_template(req: TemplateReq, request: Request):
+    if req.image not in deploy.IMAGES:
+        raise HTTPException(400, "unknown image")
+    used = await _call(deploy.used_vmids(pve))
+    vmid = deploy.free_ids(used | {int(k) for k in state.data["templates"]}, 9000, 1)[0]
+    state.data["templates"][str(vmid)] = {
+        **req.model_dump(), "vmid": vmid, "status": "building", "step": "queued",
+        "created": time.time(), "ci_base": _ci_base(request)}
+    state.save()
+    deploy.spawn(deploy.build_template(pve, str(vmid)))
+    return {"vmid": vmid}
+
+
+@app.delete("/api/templates/{vmid}")
+async def delete_template(vmid: int):
+    t = state.data["templates"].get(str(vmid))
+    if not t:
+        raise HTTPException(404, "not a template built by this tool")
+    if t["status"] == "building":
+        raise HTTPException(409, "template is still building")
+    if vmid in await _call(deploy.used_vmids(pve)):
+        node = t["node"]
+        cfg = await _call(pve.get(f"/nodes/{node}/qemu/{vmid}/config"))
+        if deploy.TEMPLATE_TAG not in cfg.get("tags", ""):
+            raise HTTPException(409, "VM no longer carries the vdi-template tag; left untouched")
+        st = await _call(pve.get(f"/nodes/{node}/qemu/{vmid}/status/current"))
+        if st.get("status") != "stopped":
+            await _call(pve.wait_task(node, await _call(pve.post(f"/nodes/{node}/qemu/{vmid}/status/stop"))))
+        upid = await _call(pve.delete(f"/nodes/{node}/qemu/{vmid}", purge=1))
+        await _call(pve.wait_task(node, upid))
+    del state.data["templates"][str(vmid)]
+    state.data["hosts"].pop(f"t{vmid}", None)
+    state.save()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- batches
+
+class BatchReq(BaseModel):
+    template: int
+    count: int = Field(ge=1, le=2000)
+    prefix: str = Field("vdi", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,30}$")
+    storage: str | None = None       # set to a different storage for full clones
+    nodes: list[str] = []            # extra target nodes (shared storage only)
+    cores: int | None = Field(None, ge=1, le=128)
+    memory: int | None = Field(None, ge=512, le=1048576)
+    start: bool = True
+    concurrency: int = Field(4, ge=1, le=32)
+
+
+@app.post("/api/batches")
+async def create_batch(req: BatchReq, request: Request):
+    res = await _call(pve.get("/cluster/resources"))
+    tmpl = next((r for r in res if r.get("type") == "qemu" and int(r["vmid"]) == req.template), None)
+    if not tmpl or not tmpl.get("template"):
+        raise HTTPException(400, "template not found")
+    node = tmpl["node"]
+    cfg = await _call(pve.get(f"/nodes/{node}/qemu/{req.template}/config"))
+    disk = next((v for k, v in cfg.items() if k in ("scsi0", "virtio0", "sata0", "ide0") and isinstance(v, str)), "")
+    src_storage = disk.split(":")[0]
+    full = bool(req.storage and req.storage != src_storage)
+    target_storage = req.storage or src_storage
+    shared = any(r.get("type") == "storage" and r.get("storage") == target_storage and r.get("shared") for r in res)
+    nodes = [n for n in req.nodes if n] or [node]
+    if nodes != [node] and not shared:
+        raise HTTPException(400, f"storage {target_storage} is local to {node}; other nodes need shared storage")
+    used = {int(r["vmid"]) for r in res if r.get("type") in ("qemu", "lxc")}
+    ids = deploy.free_ids(used, 1000, req.count)
+    bid = deploy.new_id()
+    width = max(3, len(str(req.count)))
+    vms = [{"vmid": vmid, "name": f"{req.prefix}-{bid}-{i + 1:0{width}d}", "node": nodes[i % len(nodes)],
+            "status": "queued"} for i, vmid in enumerate(ids)]
+    state.data["batches"][bid] = {
+        "template": req.template, "template_name": tmpl.get("name", ""), "template_node": node,
+        "storage": target_storage, "full": full, "cores": req.cores, "memory": req.memory,
+        "start": req.start, "concurrency": req.concurrency, "prefix": req.prefix,
+        "status": "deploying", "created": time.time(), "ci_base": _ci_base(request), "vms": vms}
+    state.save()
+    deploy.spawn(deploy.deploy_batch(pve, bid))
+    return {"id": bid}
+
+
+@app.delete("/api/batches/{bid}")
+async def remove_batch(bid: str):
+    b = state.data["batches"].get(bid)
+    if not b:
+        raise HTTPException(404, "batch not found")
+    if b["status"] in ("deploying", "deleting"):
+        raise HTTPException(409, f"batch is {b['status']}")
+    b["status"] = "deleting"
+    state.save()
+    deploy.spawn(deploy.delete_batch(pve, bid))
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------- update
+
+@app.post("/api/update")
+async def self_update():
+    """Pull the latest revision of the current branch and restart."""
+    cmd = ("cd /opt/vdi-tool && b=$(git rev-parse --abbrev-ref HEAD) && git fetch --depth 1 origin \"$b\" "
+           "&& git checkout -B \"$b\" FETCH_HEAD && bash scripts/ct-setup.sh")
+    try:
+        subprocess.run(["systemd-run", "--unit", f"vdi-tool-update-{int(time.time())}", "bash", "-c", cmd],
+                       check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise HTTPException(500, f"could not start the update: {getattr(e, 'stderr', e)}") from e
+    return {"ok": True}
 
 
 app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")

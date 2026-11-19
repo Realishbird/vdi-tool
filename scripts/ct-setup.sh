@@ -4,6 +4,7 @@ set -euo pipefail
 cd /opt/vdi-tool
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y -qq python3 python3-venv >/dev/null
+mkdir -p /var/lib/vdi-tool && chmod 700 /var/lib/vdi-tool
 [[ -d .venv ]] || python3 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q -r requirements.txt

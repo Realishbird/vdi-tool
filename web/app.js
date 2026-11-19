@@ -13,15 +13,34 @@ const meter = (label, used, total, text) => {
   return `<div class="meter"><div class="meter-top"><span>${label}</span><span>${text ?? `${bytes(used)} / ${bytes(total)}`} · ${p}%</span></div><div class="bar ${cls}"><span style="width:${p}%"></span></div></div>`;
 };
 const CLONE_OK = new Set(["lvmthin", "zfspool", "rbd", "nfs", "dir", "cifs", "glusterfs", "cephfs"]);
-const TITLES = { overview: "Overview", storage: "Storage", network: "Network", guests: "VMs & containers" };
+const TITLES = { overview: "Overview", storage: "Storage", network: "Network", guests: "VMs & containers", deploy: "Deploy desktops" };
 
-let data = null;
+let data = null, dep = null;
 
 function show(view) {
   if (!TITLES[view]) view = "overview";
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $(`#view-${view}`).classList.remove("hidden");
-  document.querySelectorAll("nav a[data-view]").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  $("#tmpl-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await api("POST", "/api/templates", formData(e.target)); e.target.closest("details").open = false; e.target.password.value = ""; load(); } catch (x) { fail(x); }
+});
+$("#batch-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await api("POST", "/api/batches", formData(e.target)); load(); } catch (x) { fail(x); }
+});
+document.addEventListener("click", async (e) => {
+  const t = e.target.dataset;
+  try {
+    if (t.delBatch && window.confirm(`Stop and permanently delete every desktop in batch ${t.delBatch}?`)) { await api("DELETE", `/api/batches/${t.delBatch}`); load(); }
+    if (t.delTmpl && window.confirm(`Permanently delete template ${t.delTmpl}? Linked clones made from it must be deleted first.`)) { await api("DELETE", `/api/templates/${t.delTmpl}`); load(); }
+  } catch (x) { fail(x); }
+});
+$("#update").addEventListener("click", async () => {
+  if (!window.confirm("Update vdi-tool to the latest revision? The GUI restarts for a few seconds.")) return;
+  try { await api("POST", "/api/update"); $("#update").textContent = "Updating…"; setTimeout(() => location.reload(), 20000); } catch (x) { fail(x); }
+});
+document.querySelectorAll("nav a[data-view]").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   $("#title").textContent = TITLES[view];
 }
 
@@ -76,6 +95,63 @@ function render() {
       `<tr><td colspan="9" class="empty">No VMs or containers yet.</td></tr>`);
 }
 
+const opts = (el, items, keep = true) => {
+  const cur = el.value;
+  el.innerHTML = items.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  if (keep && items.some(([v]) => String(v) === cur)) el.value = cur;
+};
+
+function renderDeploy() {
+  const imgStores = data.storage.filter((s) => s.content.includes("images") && s.status === "available");
+  const storeLabel = (s) => `${s.id} (${s.type}, ${bytes(s.total - s.used)} free)`;
+  // Prefer the roomiest storage that supports linked clones.
+  const sorted = [...imgStores].sort((a, b) => (CLONE_OK.has(b.type) - CLONE_OK.has(a.type)) || (b.total - b.used) - (a.total - a.used));
+  const uniq = [...new Map(sorted.map((s) => [s.id, s])).values()];
+  document.querySelectorAll(".f-node").forEach((el) => opts(el, data.nodes.map((n) => [n.name, n.name])));
+  document.querySelectorAll(".f-storage").forEach((el) => opts(el, uniq.map((s) => [s.id, storeLabel(s)])));
+  document.querySelectorAll(".f-bridge").forEach((el) => opts(el, [...new Set(data.networks.map((b) => b.iface))].map((b) => [b, b])));
+  opts($("#f-bstorage"), [["", "Same as template (linked clones)"], ...uniq.map((s) => [s.id, `${storeLabel(s)}: full clones if different`])]);
+  opts($("#f-image"), Object.entries(dep.images));
+  const ready = dep.templates.filter((t) => t.status === "ready" && t.exists);
+  opts($("#f-template"), ready.map((t) => [t.vmid, `${t.vmid} · ${t.name}`]));
+
+  $("#templates-table").innerHTML = `<tr><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th></th></tr>` +
+    (dep.templates.map((t) => `<tr><td class="num">${t.vmid}</td><td><b>${esc(t.name)}</b>${t.external ? ' <span class="tag">existing</span>' : ""}</td>
+      <td>${esc(t.node)}</td>
+      <td><span class="status-${esc(t.status)}">${esc(t.status)}</span>${t.step ? ` · ${esc(t.step)}` : ""}${t.error ? `<div class="errs">${esc(t.error)}</div>` : ""}</td>
+      <td>${t.external || t.status === "building" ? "" : `<button class="btn small danger" data-del-tmpl="${t.vmid}">Delete</button>`}</td></tr>`).join("") ||
+      `<tr><td colspan="5" class="empty">No templates yet. Build one below.</td></tr>`);
+
+  $("#batches").innerHTML = dep.batches.map((b) => {
+    const c = b.counts, done = (c.running || 0) + (c.created || 0) + (c.stopped || 0), failed = c.failed || 0;
+    const busy = b.status === "deploying" || b.status === "deleting";
+    const parts = Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · ");
+    return `<div class="card batch"><div class="batch-head">
+      <div><b>${esc(b.prefix)}-${esc(b.id)}</b> <span class="status-${esc(b.status)}">${esc(b.status)}</span>
+        <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
+      <button class="btn small danger" data-del-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Delete batch</button></div>
+      ${meter(parts, done, b.count, `${done} of ${b.count} ready${failed ? `, ${failed} failed` : ""}`)}
+      ${b.errors.length ? `<div class="errs">${esc(b.errors.join("\n"))}</div>` : ""}</div>`;
+  }).join("") || `<div class="empty">No batches yet.</div>`;
+}
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || r.statusText));
+  return j;
+}
+const fail = (e) => { const err = $("#error"); err.textContent = e.message; err.classList.remove("hidden"); };
+const formData = (form) => {
+  const o = {};
+  for (const el of form.elements) {
+    if (!el.name) continue;
+    if (el.type === "checkbox") o[el.name] = el.checked;
+    else if (el.value !== "") o[el.name] = el.type === "number" ? Number(el.value) : el.value;
+  }
+  return o;
+};
+
 async function load() {
   const err = $("#error"); err.classList.add("hidden");
   try {
@@ -88,7 +164,9 @@ async function load() {
     const r = await fetch("/api/overview");
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     data = await r.json();
+    dep = await api("GET", "/api/deploy");
     render();
+    renderDeploy();
   } catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
 }
 
@@ -97,4 +175,4 @@ window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 $("#refresh").addEventListener("click", load);
 show(location.hash.slice(1));
 load();
-setInterval(load, 15000);
+setInterval(load, 5000);

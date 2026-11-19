@@ -23,13 +23,15 @@ See the top of `install.sh` for the full list.
 ## Status
 
 - [x] Step 1: installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
-- [ ] Step 2: golden images and fast batch deploy (linked clones)
+- [ ] Step 2: golden images and fast batch deploy (linked clones). Linux template, batch deploy and teardown are in; Windows is next
 - [ ] Step 3: workload harness (agent in the desktops, real-world profiles)
 - [ ] Step 4: metrics and reports (Prometheus, Grafana, run comparisons)
 
 ## Security notes
 
 The GUI has no login yet and the API token has the PVEAdmin role. Keep port 8080 on a trusted network.
+The tool also serves cloud-init data to the desktops on that port, including the template build config
+(with the `vdi` user's password) while a template exists.
 
 ## Layout
 
