@@ -85,9 +85,16 @@
           <label>Memory (MB)<input name="memory" type="number" value="8192" min="4096" step="1024"></label>
           <label>Disk (GB)<input name="disk_gb" type="number" value="64" min="52"></label>
           <label>Password for user "vdi"<input name="password" type="text" spellcheck="false" required minlength="4" autocomplete="off" data-1p-ignore data-lpignore="true"></label>
+          <label class="check"><input type="checkbox" name="euc" id="f-euc" disabled> Include EUC Score</label>
           <div class="form-actions"><button class="btn primary">Build template</button>
             <span class="hint">Installs Windows 11 Pro hands-free, with VirtIO drivers, the guest agent and Remote Desktop. Takes 20 to 40 minutes. Not activated; clones share one computer name for now.</span></div>
         </form>
+      </details>
+      <details class="card form-card">
+        <summary>EUC Score package (user experience tests on Windows)</summary>
+        <div class="hint" id="euc-state">Checking…</div>
+        <div class="form-actions"><input type="file" id="euc-file" accept=".zip,.exe"><button class="btn" id="euc-up">Upload</button><button class="btn danger hidden" id="euc-rm">Remove</button></div>
+        <p class="hint">Download Install-EUCScoreBase.zip from eucscore.com yourself and upload it here. Uploading it means you accept the EUC Score Subscription Agreement; organizations with more than 50 users or over US$1M revenue need a paid subscription. Templates built with "Include EUC Score" install it silently to C:\EUCScore and keep the vdi user logged on, because its tests need a desktop session.</p>
       </details>
       <p class="hint">Upload ISOs to Proxmox first. Any existing Proxmox template can be used for a batch.</p>
 

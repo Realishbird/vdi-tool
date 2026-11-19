@@ -118,7 +118,31 @@ def unattend_xml(computer: str, password: str) -> str:
 """
 
 
-def setup_ps1(done_url: str) -> str:
+def _euc_ps1(base: str, password: str) -> str:
+    """Install the EUC Score base package for all users and keep the vdi user logged on.
+
+    Simloads drive real applications on screen, so they only run inside a logged-on desktop
+    session. The automatic logon keeps the password in the registry, which is fine for test
+    desktops and nothing else.
+    """
+    pw = password.replace("'", "''")
+    return f"""# EUC Score base package, silent and for all users.
+try {{
+  Invoke-WebRequest -UseBasicParsing -Uri '{base}/agent/eucscore.exe' -OutFile C:\\Install-EUCScoreBase.exe -TimeoutSec 600
+  Start-Process C:\\Install-EUCScoreBase.exe -ArgumentList '/VERYSILENT', '/ALLUSERS', '/SUPRESSMESSAGEBOXES', '/SP-', '/DIR=C:\\EUCScore' -Wait
+  Remove-Item C:\\Install-EUCScoreBase.exe -Force
+  icacls C:\\EUCScore\\Results /grant 'Users:(OI)(CI)M' | Out-Null
+}} catch {{ Write-Output ('EUC Score install failed: ' + $_.Exception.Message) }}
+$wl = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'
+Set-ItemProperty $wl -Name AutoAdminLogon -Value '1'
+Set-ItemProperty $wl -Name DefaultUserName -Value 'vdi'
+Set-ItemProperty $wl -Name DefaultPassword -Value '{pw}'
+Remove-ItemProperty $wl -Name AutoLogonCount -ErrorAction SilentlyContinue
+"""
+
+
+def setup_ps1(done_url: str, euc_base: str | None = None, password: str = "") -> str:
+    euc = _euc_ps1(euc_base, password) if euc_base else ""
     return f"""$ErrorActionPreference = 'Continue'
 Start-Transcript -Path C:\\vdi-setup.log
 # VirtIO guest tools: remaining drivers plus the QEMU guest agent.
@@ -130,7 +154,7 @@ Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
 powercfg /change standby-timeout-ac 0
 powercfg /change monitor-timeout-ac 0
 powercfg /hibernate off
-# Tell vdi-tool the build is finished, then power off so it can become a template.
+{euc}# Tell vdi-tool the build is finished, then power off so it can become a template.
 for ($i = 0; $i -lt 60; $i++) {{
   try {{ Invoke-WebRequest -UseBasicParsing -Method Post -Uri '{done_url}' -TimeoutSec 10 | Out-Null; break }} catch {{ Start-Sleep 5 }}
 }}

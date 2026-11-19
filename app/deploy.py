@@ -276,7 +276,7 @@ async def _build_windows(pve: PVE, t: dict, log) -> None:
         log("preparing the answer file")
         iso = windows.make_iso(
             windows.unattend_xml(t["name"][:15], _secrets[str(vmid)]),
-            windows.setup_ps1(f"{t['ci_base']}/ci/{ci_key}/done"))
+            windows.setup_ps1(f"{t['ci_base']}/ci/{ci_key}/done", t["ci_base"] if t.get("euc") else None, _secrets[str(vmid)]))
         try:
             with open(iso, "rb") as f:
                 await pve.wait_task(node, await pve.upload(node, iso_store, "iso", answer_name, f))

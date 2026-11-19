@@ -240,6 +240,7 @@ class TemplateReq(BaseModel):
     memory: int = Field(4096, ge=1024, le=262144)
     disk_gb: int = Field(32, ge=8, le=1024)
     password: str = Field(min_length=4, max_length=64)
+    euc: bool = False  # Windows only: install the EUC Score base package and keep vdi logged on
 
 
 def _public(t: dict) -> dict:
@@ -289,6 +290,8 @@ async def deploy_state():
 async def create_template(req: TemplateReq, request: Request):
     if req.os == "windows" and not (req.win_iso and req.virtio_iso):
         raise HTTPException(400, "pick the Windows ISO and the VirtIO driver ISO")
+    if req.euc and (req.os != "windows" or not EUC_FILE.is_file()):
+        raise HTTPException(400, "upload the EUC Score base package first; it is for Windows templates only")
     if req.os == "linux" and req.image not in deploy.IMAGES:
         raise HTTPException(400, "unknown image")
     used = await _call(deploy.used_vmids(pve))
@@ -469,6 +472,69 @@ async def agent_diskspd():
     if not f.is_file():
         raise HTTPException(404, "DiskSpd is not installed in the tool yet; run Update to latest")
     return FileResponse(f, media_type="application/octet-stream")
+
+
+EUC_FILE = deploy.STATE_DIR / "eucscore-base.exe"
+EUC_MAX = 2 * 1024**3
+
+
+@app.get("/agent/eucscore.exe")
+async def agent_eucscore():
+    if not EUC_FILE.is_file():
+        raise HTTPException(404, "the EUC Score base package has not been uploaded to the tool")
+    return FileResponse(EUC_FILE, media_type="application/octet-stream")
+
+
+@app.get("/api/euc")
+async def euc_state():
+    ok = EUC_FILE.is_file()
+    return {"installed": ok, "size": EUC_FILE.stat().st_size if ok else 0, "uploaded": EUC_FILE.stat().st_mtime if ok else None}
+
+
+@app.put("/api/euc/package")
+async def euc_upload(request: Request):
+    """Takes Install-EUCScoreBase.zip (or the .exe inside it) as the request body.
+
+    The tool never downloads EUC Score itself: the person who uploads it has accepted its agreement.
+    """
+    import zipfile
+    deploy.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = EUC_FILE.with_suffix(".upload")
+    size = 0
+    try:
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > EUC_MAX:
+                    raise HTTPException(413, "that file is larger than 2 GB")
+                f.write(chunk)
+        with open(tmp, "rb") as f:
+            head = f.read(2)
+        if head == b"PK":
+            with zipfile.ZipFile(tmp) as z:
+                names = [n for n in z.namelist() if re.search(r"(^|/)Install-EUCScoreBase[^/]*\.exe$", n, re.I)]
+                if not names:
+                    raise HTTPException(400, "there is no Install-EUCScoreBase .exe in that ZIP")
+                out = EUC_FILE.with_suffix(".new")
+                with z.open(names[0]) as src, open(out, "wb") as dst:
+                    while block := src.read(1 << 20):
+                        dst.write(block)
+            out.replace(EUC_FILE)
+        elif head == b"MZ":
+            tmp.replace(EUC_FILE)
+        else:
+            raise HTTPException(400, "upload Install-EUCScoreBase.zip or the .exe inside it")
+    except zipfile.BadZipFile as e:
+        raise HTTPException(400, "that ZIP could not be read") from e
+    finally:
+        tmp.unlink(missing_ok=True)
+    return await euc_state()
+
+
+@app.delete("/api/euc/package")
+async def euc_remove():
+    EUC_FILE.unlink(missing_ok=True)
+    return {"ok": True}
 
 
 @app.get("/agent/blob")

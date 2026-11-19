@@ -366,3 +366,22 @@ async function authPanel(open) {
 }
 $("#auth-btn").addEventListener("click", () => authPanel($("#auth-panel").classList.contains("hidden")));
 authPanel();
+
+// EUC Score package: uploaded by the person, never downloaded by the tool.
+async function eucState() {
+  const e = await api("GET", "/api/euc");
+  $("#euc-state").textContent = e.installed ? `Uploaded: ${(e.size / 1e6).toFixed(0)} MB on ${new Date(e.uploaded * 1000).toLocaleString()}.` : "Not uploaded yet.";
+  $("#euc-rm").classList.toggle("hidden", !e.installed);
+  $("#f-euc").disabled = !e.installed;
+  if (!e.installed) $("#f-euc").checked = false;
+}
+$("#euc-up").addEventListener("click", async () => {
+  const f = $("#euc-file").files[0];
+  if (!f) return fail(new Error("Pick the EUC Score ZIP first."));
+  $("#euc-state").textContent = "Uploading…";
+  const r = await fetch("/api/euc/package", { method: "PUT", body: f });
+  if (!r.ok) fail(new Error(((await r.json().catch(() => ({}))).detail) || r.statusText));
+  eucState();
+});
+$("#euc-rm").addEventListener("click", async () => { try { await api("DELETE", "/api/euc/package"); eucState(); } catch (x) { fail(x); } });
+eucState().catch(() => {});
