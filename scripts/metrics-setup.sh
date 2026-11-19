@@ -50,6 +50,9 @@ if ! dpkg -s grafana >/dev/null 2>&1; then
   apt-get install -y -qq grafana >/dev/null
 fi
 install -d /etc/grafana/provisioning/datasources /etc/grafana/provisioning/dashboards
+# Grafana runs as its own user and cannot read /opt/vdi-tool, so give it a copy of the dashboards.
+install -d -o grafana -g grafana -m 755 /var/lib/grafana/dashboards
+install -o grafana -g grafana -m 644 grafana/dashboards/*.json /var/lib/grafana/dashboards/
 cat > /etc/grafana/provisioning/datasources/vdi-tool.yaml <<YML
 apiVersion: 1
 datasources:
@@ -67,7 +70,7 @@ providers:
     type: file
     allowUiUpdates: false
     options:
-      path: /opt/vdi-tool/grafana/dashboards
+      path: /var/lib/grafana/dashboards
 YML
 # Read-only viewing without a login, so the GUI can link straight to the dashboard.
 install -d /etc/systemd/system/grafana-server.service.d
@@ -75,7 +78,7 @@ cat > /etc/systemd/system/grafana-server.service.d/vdi-tool.conf <<UNIT
 [Service]
 Environment=GF_AUTH_ANONYMOUS_ENABLED=true
 Environment=GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-Environment=GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/opt/vdi-tool/grafana/dashboards/vdi-overview.json
+Environment=GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/vdi-overview.json
 UNIT
 
 systemctl daemon-reload
