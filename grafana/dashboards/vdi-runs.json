@@ -205,7 +205,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"} * on(run) group_left() (vdi_run_valid == 1))",
+     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "instant": true
     }
    ]
@@ -246,7 +246,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"} * on(run) group_left() (vdi_run_valid == 1))",
+     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "instant": true
     }
    ]
@@ -293,7 +293,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"} * on(run) group_left() (vdi_run_valid == 1))",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -341,7 +341,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"} * on(run) group_left() (vdi_run_valid == 1))",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -389,7 +389,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"p95_ms\"} * on(run) group_left() (vdi_run_valid == 1))",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"p95_ms\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -437,7 +437,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"peak_host_cpu\"} * on(run) group_left() (vdi_run_valid == 1))",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"peak_host_cpu\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
