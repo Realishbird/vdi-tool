@@ -26,6 +26,9 @@ See the top of `install.sh` for the full list.
 architecture, templates, batch deploy, workloads, metrics, reports, measured results and known limits.
 The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/build.js`.
 
+**[Addendum A: testing tools (PDF)](docs/vdi-tool-guide-addendum-a.pdf)**: fio, DiskSpd, the built-in workloads, the guest agent,
+the Proxmox cross-check, Prometheus and Grafana, density tests and EUC Score, and how the tool drives each one.
+
 ## What it does
 
 - **Golden templates**: builds Ubuntu 24.04 (XFCE, xrdp) and Windows 11 templates hands-free, or uses any existing Proxmox template.
