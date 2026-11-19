@@ -430,8 +430,42 @@ class RunReq(BaseModel):
 
 @app.get("/api/runs")
 async def list_runs():
-    return {"profiles": runs.PROFILES,
+    profs = runs.all_profiles()
+    return {"profiles": {k: v["name"] for k, v in profs.items()},
+            "kinds": {k: v["kind"] for k, v in profs.items()},
+            "custom": [k for k, v in profs.items() if v.get("custom")],
             "runs": sorted((runs.brief(r) for r in runs.runs.values()), key=lambda r: r["created"], reverse=True)}
+
+
+class ProfileReq(BaseModel):
+    name: str = Field(min_length=3, max_length=80)
+    rw: str = Field(pattern="^(randrw|rw|randread|randwrite|read|write)$")
+    bs: str = Field("4k", pattern=r"^\d{1,4}[kKmM]$")
+    iodepth: int = Field(16, ge=1, le=1024)
+    numjobs: int = Field(1, ge=1, le=64)
+    rwmixread: int = Field(70, ge=0, le=100)
+    rate_iops: int | None = Field(None, ge=1, le=10_000_000)
+
+
+@app.post("/api/profiles")
+async def add_profile(req: ProfileReq):
+    """Save a custom fio workload so it can be picked for runs."""
+    custom = runs.custom_profiles()
+    pid = "c-" + deploy.new_id()
+    fio = req.model_dump(exclude={"name"}, exclude_none=True)
+    custom[pid] = {"name": req.name, "kind": "fio", "fio": fio}
+    runs.save_custom(custom)
+    return {"id": pid}
+
+
+@app.delete("/api/profiles/{pid}")
+async def delete_profile(pid: str):
+    custom = runs.custom_profiles()
+    if pid not in custom:
+        raise HTTPException(404, "not a custom workload")
+    del custom[pid]
+    runs.save_custom(custom)
+    return {"ok": True}
 
 
 @app.get("/api/runs/{rid}")
@@ -444,16 +478,17 @@ async def get_run(rid: str):
 
 @app.post("/api/runs")
 async def start_run(req: RunReq, request: Request):
-    if req.profile not in runs.PROFILES:
-        raise HTTPException(400, "unknown profile")
+    prof = runs.all_profiles().get(req.profile)
+    if not prof:
+        raise HTTPException(400, "unknown workload")
     b = state.data["batches"].get(req.batch)
     if not b or b["status"] not in ("ready", "partial"):
         raise HTTPException(400, "batch not found or not ready")
-    if b.get("os") == "windows" and req.profile != "bootstorm":
+    if b.get("os") == "windows" and prof["kind"] != "bootstorm":
         raise HTTPException(400, "Windows desktops only support the boot storm run for now")
     if runs.active():
         raise HTTPException(409, "another run is in progress")
-    if req.profile in ("fill", "disk"):
+    if prof["kind"] in ("fill", "fio"):
         n = sum(vm["status"] in ("running", "created") for vm in b["vms"])
         await _check_capacity(b["storage"], b["template_node"], n, req.size_gb)
     r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request), req.size_gb)

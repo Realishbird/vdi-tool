@@ -166,25 +166,27 @@ document.addEventListener("mousemove", (e) => {
 const SUMMARY_LABELS = {
   desktops: "Desktops", completed: "Completed", failed: "Failed", mean_ms: "Avg action time (ms)", p95_ms: "Worst p95 (ms)",
   worst_desktop_ms: "Slowest desktop avg (ms)", actions: "Actions done", errors: "Action errors", total_iops: "Total IOPS",
-  iops_per_desktop: "IOPS per desktop", read_lat_ms: "Read latency (ms)", write_lat_ms: "Write latency (ms)", worst_p99_ms: "Worst p99 latency (ms)",
+  iops_per_desktop: "IOPS per desktop", total_mbps: "Throughput (MB/s)", total_gbit: "Throughput (Gbit/s)", read_lat_ms: "Read latency (ms)", write_lat_ms: "Write latency (ms)", worst_p99_ms: "Worst p99 latency (ms)",
   total_mb_per_s: "Total hashed (MB/s)", mb_per_s_per_desktop: "Per desktop (MB/s)", mean_boot_s: "Avg boot (s)", p95_boot_s: "p95 boot (s)",
   all_up_s: "All desktops up (s)", written_gb: "Written this run (GB)", filled_gb_per_desktop: "Fill per desktop (GB)",
   total_write_mb_per_s: "Total write speed (MB/s)", stopped_early: "Stopped early", peak_host_cpu: "Peak host CPU (%)",
 };
 const resultText = (profile, r) => !r ? "-" :
+  profile === "fio" ? `${r.iops.toLocaleString()} IOPS · ${r.mbps ?? "-"} MB/s · read ${r.read.lat_ms} ms · write ${r.write.lat_ms} ms` :
   profile === "office" ? `${r.mean_ms} ms avg · ${r.p95_ms} ms p95 · ${r.actions} actions` :
-  profile === "disk" ? `${r.iops} IOPS · read ${r.read.lat_ms} ms · write ${r.write.lat_ms} ms` :
   profile === "cpu" ? `${r.mb_per_s} MB/s on ${r.cores} cores` :
   profile === "fill" ? `${r.written_gb} GB written at ${r.mb_per_s} MB/s · ${r.total_gb} GB held${r.stopped ? ` · ${r.stopped}` : ""}` : `${r.boot_s} s to boot`;
 
 function renderBench() {
   opts($("#f-profile"), Object.entries(bench.profiles));
+  $("#custom-profiles").innerHTML = bench.custom.length ? `<table class="table" style="margin-top:14px"><tr><th>Your workloads</th><th></th></tr>` +
+    bench.custom.map((id) => `<tr><td>${esc(bench.profiles[id])}</td><td><button class="btn small danger" data-del-prof="${esc(id)}">Delete</button></td></tr>`).join("") + "</table>" : "";
   opts($("#f-rbatch"), dep.batches.filter((b) => b.status === "ready" || b.status === "partial").map((b) => [b.id, `${b.prefix}-${b.id} · ${b.count} desktops on ${b.storage}`]));
   $("#runs").innerHTML = bench.runs.map((r) => {
     const s = r.summary || {}, c = r.counts, fin = (c.done || 0) + (c.failed || 0), total = Object.values(c).reduce((a, b) => a + b, 0);
     return `<div class="card run ${r.id === selRun ? "selected" : ""}" data-run="${esc(r.id)}"><div class="batch-head">
-      <div><b>${esc(bench.profiles[r.profile] || r.profile)}</b> <span class="status-${esc(r.status)}">${esc(r.status)}</span>
-        <div class="sub">${esc(r.batch_name)} · ${total} desktops on ${esc(r.storage)} · ${new Date(r.created * 1000).toLocaleString()}${r.profile === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}`}</div></div>
+      <div><b>${esc(r.profile_name || bench.profiles[r.profile] || r.profile)}</b> <span class="status-${esc(r.status)}">${esc(r.status)}</span>
+        <div class="sub">${esc(r.batch_name)} · ${total} desktops on ${esc(r.storage)} · ${new Date(r.created * 1000).toLocaleString()}${r.kind === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}${["fio", "fill"].includes(r.kind) ? `, ${r.size_gb} GB each` : ""}`}</div></div>
       <button class="btn small danger" data-del-run="${esc(r.id)}" ${r.status === "running" ? "disabled" : ""}>Delete</button></div>
       ${r.status === "running" ? meter(Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · "), fin, total, `${fin} of ${total} finished`, true) : ""}
       ${r.error ? `<div class="errs">${esc(r.error)}</div>` : ""}
@@ -192,13 +194,14 @@ function renderBench() {
   }).join("") || `<div class="empty">No runs yet. Deploy a batch, then start a run.</div>`;
 
   // Side-by-side comparison: one table per workload, one row per finished run.
-  const cols = { office: ["mean_ms", "p95_ms", "worst_desktop_ms"], disk: ["total_iops", "iops_per_desktop", "read_lat_ms", "write_lat_ms", "worst_p99_ms"],
+  const cols = { office: ["mean_ms", "p95_ms", "worst_desktop_ms"], fio: ["total_iops", "total_mbps", "total_gbit", "read_lat_ms", "write_lat_ms", "worst_p99_ms"],
     cpu: ["total_mb_per_s", "mb_per_s_per_desktop"], fill: ["written_gb", "filled_gb_per_desktop", "total_write_mb_per_s"], bootstorm: ["mean_boot_s", "p95_boot_s", "all_up_s"] };
-  $("#compare").innerHTML = Object.entries(cols).map(([p, keys]) => {
+  $("#compare").innerHTML = [...new Set(bench.runs.map((r) => r.profile))].map((p) => {
     const done = bench.runs.filter((r) => r.profile === p && r.status === "done");
-    if (done.length < 2) return "";
+    const keys = done.length ? cols[done[0].kind] : null;
+    if (done.length < 2 || !keys) return "";
     const all = [...keys, "peak_host_cpu"];
-    return `<h2>Compare: ${esc(bench.profiles[p])}</h2><table class="table"><tr><th>When</th><th>Batch</th><th>Storage</th><th>Desktops</th>${all.map((k) => `<th>${SUMMARY_LABELS[k]}</th>`).join("")}</tr>` +
+    return `<h2>Compare: ${esc(done[0].profile_name || p)}</h2><table class="table"><tr><th>When</th><th>Batch</th><th>Storage</th><th>Desktops</th>${all.map((k) => `<th>${SUMMARY_LABELS[k]}</th>`).join("")}</tr>` +
       done.map((r) => `<tr><td>${new Date(r.created * 1000).toLocaleString()}</td><td>${esc(r.batch_name)}</td><td><b>${esc(r.storage)}</b></td><td class="num">${r.summary.completed}</td>${all.map((k) => `<td class="num">${(r.summary[k] ?? "-").toLocaleString()}</td>`).join("")}</tr>`).join("") + "</table>";
   }).join("");
 
@@ -207,7 +210,7 @@ function renderBench() {
   const smp = d.samples, pts = (k) => smp.filter((s) => s[k] !== undefined).map((s) => [s.t, s[k]]);
   const lat = Object.entries(d.latency).map(([t, [sum, n]]) => [Number(t), n ? sum / n : 0]).sort((a, b) => a[0] - b[0]);
   const charts = [
-    d.profile === "office" ? chart("Action response time", "ms", [{ name: "Avg across desktops", color: C1, points: lat }]) : "",
+    d.kind === "office" ? chart("Action response time", "ms", [{ name: "Avg across desktops", color: C1, points: lat }]) : "",
     chart("Host CPU", "%", [{ name: "Host CPU", color: C1, points: pts("host_cpu") }]),
     chart("Desktop disk throughput", "MB/s", [{ name: "Read", color: C1, points: pts("diskread") }, { name: "Write", color: C2, points: pts("diskwrite") }]),
     chart("Desktop network", "MB/s", [{ name: "In", color: C1, points: pts("netin") }, { name: "Out", color: C2, points: pts("netout") }]),
@@ -216,10 +219,10 @@ function renderBench() {
   const tiles = Object.entries(d.summary || {}).filter(([k]) => SUMMARY_LABELS[k]).map(([k, v]) => `<div class="tile"><div class="label">${SUMMARY_LABELS[k]}</div><div class="value">${v.toLocaleString()}</div></div>`).join("");
   const rows = Object.values(d.vms).map((vm) => `<tr><td class="num">${vm.vmid}</td><td><b>${esc(vm.name)}</b></td><td>${esc(vm.node)}</td>
     <td><span class="status-${vm.status === "done" ? "done" : vm.status === "failed" ? "failed" : "running"}">${esc(vm.status)}</span></td>
-    <td>${vm.error ? `<span class="errs">${esc(vm.error)}</span>` : esc(resultText(d.profile, vm.result))}</td>
+    <td>${vm.error ? `<span class="errs">${esc(vm.error)}</span>` : esc(resultText(d.kind, vm.result))}</td>
     <td class="num">${vm.io ? `${bytes(vm.io.diskread)} / ${bytes(vm.io.diskwrite)}` : "-"}</td>
     <td class="num">${vm.io ? `${bytes(vm.io.netin)} / ${bytes(vm.io.netout)}` : "-"}</td></tr>`).join("");
-  $("#run-detail").innerHTML = `<h2>Run ${esc(d.id)}: ${esc(bench.profiles[d.profile] || d.profile)}</h2>
+  $("#run-detail").innerHTML = `<h2>Run ${esc(d.id)}: ${esc(d.profile_name || d.profile)}</h2>
     ${tiles ? `<div class="tiles">${tiles}</div>` : ""}<div class="charts">${charts}</div>
     <h2>Per desktop</h2><table class="table"><tr><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th>Result</th><th>Disk read / written</th><th>Net in / out</th></tr>${rows}</table>`;
 }
@@ -275,12 +278,14 @@ const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
 submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
 submitOnce($("#win-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
 submitOnce($("#batch-form"), async (f) => { await api("POST", "/api/batches", formData(f)); f.password.value = ""; });
+submitOnce($("#prof-form"), async (f) => { await api("POST", "/api/profiles", formData(f)); f.name.value = ""; });
 submitOnce($("#run-form"), async (f) => { selRun = (await api("POST", "/api/runs", formData(f))).id; runDetail = null; });
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
   const card = e.target.closest(".run");
   if (card && !t.delRun) { selRun = card.dataset.run; runDetail = null; load(); return; }
   try {
+    if (t.delProf) { await api("DELETE", `/api/profiles/${t.delProf}`); load(); }
     if (t.delRun && window.confirm("Delete this run and its results?")) { await api("DELETE", `/api/runs/${t.delRun}`); load(); }
     if (t.pwBatch) {
       const pw = window.prompt('New password for user "vdi" on every running desktop in this batch (5 characters or more):');

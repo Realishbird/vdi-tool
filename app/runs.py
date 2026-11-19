@@ -7,6 +7,7 @@ downloads the workload script from this tool and posts its results back.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 from typing import Any
@@ -15,13 +16,43 @@ from .deploy import STATE_DIR, new_id, spawn, state
 from .pve import PVE, PVEError
 
 RUNS_DIR = STATE_DIR / "runs"
-PROFILES = {
-    "office": "Office worker (documents, compress, compute, downloads)",
-    "disk": "Disk stress (fio 4k random, 70% read)",
-    "cpu": "CPU stress (all cores)",
-    "fill": "Fill disk (write and keep data, for capacity tests)",
-    "bootstorm": "Boot storm (restart every desktop at once)",
+def _fio(name: str, **fio) -> dict:
+    return {"name": name, "kind": "fio", "fio": fio}
+
+
+# Built-in workload library. Custom fio profiles are stored beside it in profiles.json.
+BUILTIN: dict[str, dict] = {
+    "office": {"name": "Office worker (synthetic: documents, compress, compute, downloads)", "kind": "office"},
+    "vdi-kw": _fio("VDI knowledge worker disk (25 IOPS each, mixed blocks, 70% write)",
+                   rw="randrw", rwmixread=30, bssplit="4k/60:8k/20:16k/10:64k/10", iodepth=2, numjobs=1, rate_iops=25),
+    "disk": _fio("Disk stress (4k random, 70% read, QD16)", rw="randrw", rwmixread=70, bs="4k", iodepth=16, numjobs=1),
+    "db": _fio("Database (8k random, 60% read, 4 jobs x QD32)", rw="randrw", rwmixread=60, bs="8k", iodepth=32, numjobs=4),
+    "seq-read": _fio("Sequential read throughput (1M, 4 jobs x QD32)", rw="read", bs="1M", iodepth=32, numjobs=4),
+    "seq-write": _fio("Sequential write throughput (1M, 4 jobs x QD32)", rw="write", bs="1M", iodepth=32, numjobs=4),
+    "max": _fio("Max throughput (1M mixed read/write, 8 jobs x QD64)", rw="rw", rwmixread=50, bs="1M", iodepth=64, numjobs=8),
+    "cpu": {"name": "CPU stress (all cores)", "kind": "cpu"},
+    "fill": {"name": "Fill disk (write and keep data, for capacity tests)", "kind": "fill"},
+    "bootstorm": {"name": "Boot storm (restart every VM at once)", "kind": "bootstorm"},
 }
+CUSTOM_FILE = STATE_DIR / "profiles.json"
+
+
+def custom_profiles() -> dict[str, dict]:
+    try:
+        return json.loads(CUSTOM_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_custom(profiles: dict[str, dict]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    CUSTOM_FILE.write_text(json.dumps(profiles))
+
+
+def all_profiles() -> dict[str, dict]:
+    return {**BUILTIN, **{k: {**v, "custom": True} for k, v in custom_profiles().items()}}
+
+
 SAMPLE_EVERY = 10
 runs: dict[str, dict] = {}
 
@@ -32,6 +63,8 @@ def _load() -> None:
             r = json.loads(f.read_text())
             if r["status"] == "running":
                 r.update(status="failed", error="interrupted by a service restart")
+            r.setdefault("kind", "fio" if r["profile"] == "disk" else r["profile"])
+            r.setdefault("profile_name", BUILTIN.get(r["profile"], {}).get("name", r["profile"]))
             runs[r["id"]] = r
     except (OSError, ValueError):
         pass
@@ -73,7 +106,9 @@ def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb:
     b = state.data["batches"][bid]
     vms = {str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued"}
            for vm in b["vms"] if vm["status"] in ("running", "created")}
+    spec = all_profiles()[profile]
     r = {"id": new_id(), "batch": bid, "batch_name": f"{b['prefix']}-{bid}", "profile": profile,
+         "profile_name": spec["name"], "kind": spec["kind"], "spec": {k: spec[k] for k in ("kind", "fio") if k in spec},
          "duration": duration, "ramp": ramp, "base": base, "size_gb": size_gb, "status": "running", "created": time.time(),
          "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {}}
     runs[r["id"]] = r
@@ -154,8 +189,9 @@ async def _workload(pve: PVE, r: dict) -> None:
     async def launch(i: int, vm: dict) -> None:
         await asyncio.sleep(i * step)
         url = f"{r['base']}/api/runs/{r['id']}/report/{vm['vmid']}"
+        spec = base64.b64encode(json.dumps(r["spec"]).encode()).decode()
         script = (f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
-                  f"nohup python3 /tmp/vdi-workload.py --profile {r['profile']} --duration {r['duration']} "
+                  f"nohup python3 /tmp/vdi-workload.py --spec {spec} --duration {r['duration']} "
                   f"--report {url} --base {r['base']} --size-gb {r.get('size_gb', 1)} >/tmp/vdi-workload.log 2>&1 &")
         try:
             # A freshly deployed desktop may still be booting; give its guest agent time to answer.
@@ -169,7 +205,7 @@ async def _workload(pve: PVE, r: dict) -> None:
             vm.update(status="failed", error=f"could not start the workload: {e}")
 
     await asyncio.gather(*(launch(i, vm) for i, vm in enumerate(vms)))
-    deadline = time.time() + r["duration"] + 120 + (r.get("size_gb", 1) * 20 if r["profile"] == "disk" else 0)
+    deadline = time.time() + r["duration"] + 120 + (r.get("size_gb", 1) * 20 if r["kind"] == "fio" else 0)
     while time.time() < deadline and any(vm["status"] in ("starting", "running") for vm in vms):
         await asyncio.sleep(2)
     for vm in vms:
@@ -212,14 +248,16 @@ def summarize(r: dict) -> dict:
                            "failed": sum(vm["status"] == "failed" for vm in r["vms"].values())}
     if not done:
         return out
-    p = r["profile"]
+    p = r["kind"]
     if p == "office":
         means = [d["mean_ms"] for d in done]
         out.update(mean_ms=round(sum(means) / len(means), 1), p95_ms=round(max(d["p95_ms"] for d in done), 1),
                    worst_desktop_ms=round(max(means), 1), actions=sum(d["actions"] for d in done),
                    errors=sum(d.get("errors", 0) for d in done))
-    elif p == "disk":
+    elif p == "fio":
+        mbps = sum(d.get("mbps", d["read"]["mbps"] + d["write"]["mbps"]) for d in done)
         out.update(total_iops=sum(d["iops"] for d in done), iops_per_desktop=round(sum(d["iops"] for d in done) / len(done)),
+                   total_mbps=round(mbps), total_gbit=round(mbps * 8 / 1000, 2),
                    read_lat_ms=round(sum(d["read"]["lat_ms"] for d in done) / len(done), 2),
                    write_lat_ms=round(sum(d["write"]["lat_ms"] for d in done) / len(done), 2),
                    worst_p99_ms=round(max(max(d["read"]["p99_ms"], d["write"]["p99_ms"]) for d in done), 2))
@@ -240,7 +278,7 @@ def summarize(r: dict) -> dict:
 async def execute(pve: PVE, r: dict) -> None:
     spawn(_sampler(pve, r))
     try:
-        await (_bootstorm if r["profile"] == "bootstorm" else _workload)(pve, r)
+        await (_bootstorm if r["kind"] == "bootstorm" else _workload)(pve, r)
         await asyncio.sleep(SAMPLE_EVERY)  # one last host sample
         r["summary"] = summarize(r)
         r.update(status="done" if r["summary"].get("completed") else "failed", finished=time.time())
@@ -253,5 +291,5 @@ def brief(r: dict) -> dict:
     counts: dict[str, int] = {}
     for vm in r["vms"].values():
         counts[vm["status"]] = counts.get(vm["status"], 0) + 1
-    return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "duration", "ramp", "size_gb", "status",
+    return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "profile_name", "kind", "duration", "ramp", "size_gb", "status",
                                   "created", "finished", "summary", "error", "storage")} | {"counts": counts}

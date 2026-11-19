@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """vdi-tool workload, run inside a desktop. Python 3 standard library only.
 
-Profiles:
+Kinds:
   office  synthetic knowledge worker: save/open documents, compress, compute,
           download, with think time between actions. Reports action latency.
-  disk    fio 4k random 70/30 read/write. Reports IOPS and latency.
+  fio     any fio pattern the harness describes. Reports IOPS, throughput and latency.
   cpu     all-core hashing. Reports throughput.
   fill    write incompressible data and keep it, to test storage at capacity.
 """
 import argparse
+import base64
 import hashlib
 import json
 import multiprocessing
@@ -100,6 +101,7 @@ def office(duration, report, base):
 
 
 SIZE_GB = 1
+SPEC = {}
 
 
 def fill(duration, report, base):
@@ -130,10 +132,24 @@ def fill(duration, report, base):
 
 
 def disk(duration, report, base):
+    """Run fio with the settings in SPEC["fio"]; all jobs share one file of SIZE_GB."""
+    f = SPEC.get("fio", {})
     target = os.path.join(WORKDIR, "fio.dat")
-    cmd = ["fio", "--name=vdi", f"--filename={target}", f"--size={SIZE_GB}G", "--rw=randrw", "--rwmixread=70",
-           "--bs=4k", "--iodepth=16", "--ioengine=libaio", "--direct=1", "--time_based",
-           f"--runtime={duration}", "--output-format=json"]
+    rw = f.get("rw", "randrw")
+    cmd = ["fio", "--name=vdi", f"--filename={target}", f"--size={SIZE_GB}G", f"--rw={rw}",
+           f"--iodepth={int(f.get('iodepth', 16))}", f"--numjobs={int(f.get('numjobs', 1))}", "--group_reporting",
+           "--ioengine=libaio", "--direct=1", "--time_based", f"--runtime={duration}", "--output-format=json"]
+    cmd.append(f"--bssplit={f['bssplit']}" if f.get("bssplit") else f"--bs={f.get('bs', '4k')}")
+    mix = int(f.get("rwmixread", 70))
+    if rw in ("randrw", "rw"):
+        cmd.append(f"--rwmixread={mix}")
+    if f.get("rate_iops"):
+        rate = int(f["rate_iops"])
+        if rw in ("randrw", "rw"):
+            r = max(1, round(rate * mix / 100))
+            cmd.append(f"--rate_iops={r},{max(1, rate - r)}")
+        else:
+            cmd.append(f"--rate_iops={rate}")
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 300 + SIZE_GB * 20)
     try:
         os.remove(target)
@@ -143,13 +159,13 @@ def disk(duration, report, base):
         raise RuntimeError(out.stderr.strip()[-300:] or "fio failed")
     job = json.loads(out.stdout)["jobs"][0]
 
-    def side(s):
-        j = job[s]
+    def side(name):
+        j = job[name]
         return {"iops": round(j["iops"]), "mbps": round(j["bw_bytes"] / 1e6, 1),
                 "lat_ms": round(j["clat_ns"]["mean"] / 1e6, 2),
                 "p99_ms": round(j["clat_ns"].get("percentile", {}).get("99.000000", 0) / 1e6, 2)}
     r, w = side("read"), side("write")
-    return {"read": r, "write": w, "iops": r["iops"] + w["iops"]}
+    return {"read": r, "write": w, "iops": r["iops"] + w["iops"], "mbps": round(r["mbps"] + w["mbps"], 1)}
 
 
 def _burn(seconds):
@@ -169,19 +185,20 @@ def cpu(duration, report, base):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", required=True, choices=["office", "disk", "cpu", "fill"])
+    ap.add_argument("--spec", required=True, help="base64 JSON: {kind, fio?}")
     ap.add_argument("--duration", type=int, default=120)
     ap.add_argument("--report", required=True)
     ap.add_argument("--base", required=True)
     ap.add_argument("--size-gb", type=int, default=1)
     a = ap.parse_args()
-    global SIZE_GB
+    global SIZE_GB, SPEC
     SIZE_GB = max(1, a.size_gb)
+    SPEC = json.loads(base64.b64decode(a.spec))
     os.makedirs(WORKDIR, exist_ok=True)
     post(a.report, {"type": "started"})
     try:
-        result = {"office": office, "disk": disk, "cpu": cpu, "fill": fill}[a.profile](a.duration, a.report, a.base)
-        post(a.report, {"type": "result", "result": result})
+        fn = {"office": office, "fio": disk, "cpu": cpu, "fill": fill}[SPEC["kind"]]
+        post(a.report, {"type": "result", "result": fn(a.duration, a.report, a.base)})
     except Exception as e:  # report every failure back to the harness
         post(a.report, {"type": "error", "error": str(e)[:300]})
 

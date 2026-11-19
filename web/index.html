@@ -122,6 +122,20 @@
             <span class="hint">Ramp-up spreads the desktop start times, so you can see where performance drops as load builds. Boot storm ignores these numbers. For Fill disk, Duration is the time limit, so raise it for large fills.</span></div>
         </form>
       </div>
+      <details class="card form-card">
+        <summary>Workload library: add your own</summary>
+        <form id="prof-form" class="form">
+          <label>Name<input name="name" required minlength="3" placeholder="e.g. Analytics scan 256k"></label>
+          <label>Pattern<select name="rw"><option value="randrw">Random read/write mix</option><option value="randread">Random read</option><option value="randwrite">Random write</option><option value="rw">Sequential read/write mix</option><option value="read">Sequential read</option><option value="write">Sequential write</option></select></label>
+          <label>Block size<input name="bs" value="4k" required pattern="\d{1,4}[kKmM]"></label>
+          <label>Read % (mixes only)<input name="rwmixread" type="number" value="70" min="0" max="100"></label>
+          <label>Queue depth<input name="iodepth" type="number" value="16" min="1" max="1024"></label>
+          <label>Parallel jobs per VM<input name="numjobs" type="number" value="1" min="1" max="64"></label>
+          <label>IOPS limit per VM (blank = flat out)<input name="rate_iops" type="number" min="1"></label>
+          <div class="form-actions"><button class="btn primary">Save workload</button><span class="hint">Saved workloads appear in the Workload list above. They run fio inside every VM of the batch.</span></div>
+        </form>
+        <div id="custom-profiles"></div>
+      </details>
       <div id="runs"></div>
       <div id="run-detail"></div>
       <div id="compare"></div>
