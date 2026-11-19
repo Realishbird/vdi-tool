@@ -1,0 +1,283 @@
+<div class="cover">
+  <div class="bar"></div>
+  <h1>Addendum A</h1>
+  <p class="lead">The testing tools vdi-tool uses, what each one does, and exactly how the tool drives it.</p>
+  <p class="v">Addendum to the vdi-tool guide, version 1 · 19 November 2026 · covers tool revision 0cd3278<br>Source: github.com/Realishbird/vdi-tool</p>
+</div>
+
+<h1>Contents</h1>
+<ul class="toc">
+  <li><span>A1. The tools at a glance</span></li>
+  <li><span>A2. How the pieces talk to each other</span></li>
+  <li><span>A3. fio: disk workloads on Linux desktops</span></li>
+  <li><span>A4. DiskSpd: disk workloads on Windows desktops</span></li>
+  <li><span>A5. The built-in workloads: office, CPU, fill and boot storm</span></li>
+  <li><span>A6. QEMU guest agent and cloud-init: how work gets into a desktop</span></li>
+  <li><span>A7. Proxmox counters and the validity check</span></li>
+  <li><span>A8. Prometheus, the exporters and Grafana</span></li>
+  <li><span>A9. Density tests: finding how many desktops fit</span></li>
+  <li><span>A10. EUC Score: measuring what the user feels</span></li>
+  <li><span>A11. Reading the numbers</span></li>
+</ul>
+<div class="note">vdi-tool does not invent its own measuring instruments. It uses established tools for the measuring and adds the parts around them: deploying the desktops, starting every desktop at the same moment, checking the result against a second source, and reporting.</div>
+
+<h1>A1. The tools at a glance</h1>
+<table>
+  <tr><th>Tool</th><th>Job</th><th>Where it runs</th><th>Made by, licence</th></tr>
+  <tr><td><b>fio</b></td><td>Generates disk load and measures IOPS, throughput and latency.</td><td>Inside every Linux desktop.</td><td>Jens Axboe, GPL-2.0</td></tr>
+  <tr><td><b>DiskSpd</b></td><td>The same job on Windows.</td><td>Inside every Windows desktop.</td><td>Microsoft, MIT</td></tr>
+  <tr><td><b>Workload agent</b></td><td>Runs the tool above, plus the office, CPU and fill workloads, and reports back.</td><td>Inside every desktop (Python on Linux, PowerShell on Windows).</td><td>Part of vdi-tool, MIT</td></tr>
+  <tr><td><b>QEMU guest agent</b></td><td>Lets Proxmox start a command inside a desktop without a login.</td><td>Inside every desktop, baked into the template.</td><td>QEMU project, GPL-2.0</td></tr>
+  <tr><td><b>cloud-init</b></td><td>Gives each Linux clone its name, user and first-boot setup.</td><td>Inside every Linux desktop at first boot.</td><td>Canonical, Apache-2.0 or GPL-3.0</td></tr>
+  <tr><td><b>Proxmox VE API</b></td><td>Creates and controls the desktops and supplies the host's own counters.</td><td>On the Proxmox host.</td><td>Proxmox, AGPL-3.0</td></tr>
+  <tr><td><b>Proxmox exporter</b></td><td>Turns Proxmox's counters into metrics every 15 seconds.</td><td>In the tool container.</td><td>prometheus-pve-exporter, Apache-2.0</td></tr>
+  <tr><td><b>Node exporter</b> (optional)</td><td>Per network port and per disk numbers from the host itself.</td><td>On the Proxmox host, port 9100.</td><td>Prometheus project, Apache-2.0</td></tr>
+  <tr><td><b>Prometheus</b></td><td>Stores every metric over time.</td><td>In the tool container, port 9090.</td><td>Prometheus project, Apache-2.0</td></tr>
+  <tr><td><b>Grafana</b></td><td>Dashboards over the stored metrics.</td><td>In the tool container, port 3000.</td><td>Grafana Labs, AGPL-3.0</td></tr>
+  <tr><td><b>EUC Score</b> (optional)</td><td>Scripted application sessions that measure the user's experience.</td><td>Inside chosen Windows desktops.</td><td>Dr. Tritsch IT Consulting, own agreement</td></tr>
+</table>
+<p>Everything except EUC Score is installed for you. EUC Score is a separate product: you download it and upload it to the tool yourself (section A10).</p>
+
+<h1>A2. How the pieces talk to each other</h1>
+<figure>
+<svg viewBox="0 0 760 400" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1f5fbf"/></marker></defs>
+  <rect x="10" y="10" width="740" height="380" rx="8" fill="#f4f6f9" stroke="#d9dfe6"/>
+  <text x="24" y="32" font-size="12" font-weight="700" fill="#17202b">Proxmox VE host</text>
+  <rect x="30" y="50" width="250" height="210" rx="6" fill="#fff" stroke="#1f5fbf"/>
+  <text x="44" y="72" font-size="12" font-weight="700" fill="#1f5fbf">vdi-tool container</text>
+  <rect x="44" y="84" width="222" height="40" rx="4" fill="#eaf1fb"/><text x="54" y="101" font-size="11" fill="#17202b">Web GUI and run controller</text><text x="54" y="116" font-size="10" fill="#5b6876">port 8080</text>
+  <rect x="44" y="132" width="222" height="34" rx="4" fill="#eaf1fb"/><text x="54" y="153" font-size="11" fill="#17202b">Proxmox exporter</text>
+  <rect x="44" y="174" width="222" height="34" rx="4" fill="#eaf1fb"/><text x="54" y="195" font-size="11" fill="#17202b">Prometheus (port 9090)</text>
+  <rect x="44" y="216" width="222" height="34" rx="4" fill="#eaf1fb"/><text x="54" y="237" font-size="11" fill="#17202b">Grafana (port 3000)</text>
+  <rect x="30" y="290" width="250" height="80" rx="6" fill="#fff" stroke="#5b6876"/>
+  <text x="44" y="312" font-size="12" font-weight="700" fill="#17202b">Proxmox API and counters</text>
+  <text x="44" y="330" font-size="10" fill="#5b6876">create, start, guest agent exec</text>
+  <text x="44" y="345" font-size="10" fill="#5b6876">per VM disk and network counters</text>
+  <text x="44" y="360" font-size="10" fill="#5b6876">node exporter (optional, port 9100)</text>
+  <rect x="440" y="50" width="290" height="210" rx="6" fill="#fff" stroke="#c2500f"/>
+  <text x="454" y="72" font-size="12" font-weight="700" fill="#c2500f">Each desktop (1 to hundreds)</text>
+  <rect x="454" y="84" width="262" height="34" rx="4" fill="#fdf1ea"/><text x="464" y="105" font-size="11" fill="#17202b">QEMU guest agent</text>
+  <rect x="454" y="126" width="262" height="34" rx="4" fill="#fdf1ea"/><text x="464" y="147" font-size="11" fill="#17202b">Workload agent (downloaded per run)</text>
+  <rect x="454" y="168" width="262" height="34" rx="4" fill="#fdf1ea"/><text x="464" y="189" font-size="11" fill="#17202b">fio or DiskSpd, optional EUC Score</text>
+  <rect x="454" y="210" width="262" height="40" rx="4" fill="#fdf1ea"/><text x="464" y="227" font-size="11" fill="#17202b">Virtual disk</text><text x="464" y="242" font-size="10" fill="#5b6876">on the storage under test</text>
+  <rect x="440" y="290" width="290" height="80" rx="6" fill="#fff" stroke="#5b6876"/>
+  <text x="454" y="312" font-size="12" font-weight="700" fill="#17202b">Storage under test</text>
+  <text x="454" y="330" font-size="10" fill="#5b6876">local LVM-thin or ZFS today</text>
+  <text x="454" y="345" font-size="10" fill="#5b6876">NFS, iSCSI, NVMe over TCP or RDMA, FC array next</text>
+  <line x1="155" y1="260" x2="155" y2="288" stroke="#1f5fbf" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="162" y="278" font-size="10" fill="#1f5fbf">1. start workload</text>
+  <line x1="280" y1="320" x2="452" y2="104" stroke="#1f5fbf" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="345" y="275" font-size="10" fill="#1f5fbf">2. guest agent exec</text>
+  <line x1="452" y1="140" x2="270" y2="100" stroke="#c2500f" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="286" y="62" font-size="9.5" fill="#c2500f">3. download script, say ready,</text>
+  <text x="286" y="75" font-size="9.5" fill="#c2500f">wait for go, post result (HTTP)</text>
+  <line x1="585" y1="250" x2="585" y2="288" stroke="#c2500f" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="592" y="276" font-size="10" fill="#c2500f">4. real I/O</text>
+</svg>
+<figcaption>One run, end to end. The tool starts the workload through Proxmox, each desktop fetches its script and answers back over HTTP, and the load itself goes from the desktop's virtual disk to the storage under test.</figcaption>
+</figure>
+<p>Two things in this picture matter for trust in the numbers:</p>
+<ul>
+  <li><b>The load is real.</b> Every byte goes from a real virtual machine through the virtual disk, QEMU and the Proxmox storage layer to the storage. Nothing is simulated on the host.</li>
+  <li><b>There are two independent measurements.</b> The desktop says what it did (fio or DiskSpd). Proxmox says what it saw on that desktop's disk. The tool compares them (section A7).</li>
+</ul>
+
+<h1>A3. fio: disk workloads on Linux desktops</h1>
+<p class="lead">fio (flexible I/O tester) is the standard open tool for storage benchmarking. It issues reads and writes in a pattern you describe and times every single one.</p>
+<h2>How fio works</h2>
+<p>You tell fio four things: what kind of I/O (random or sequential, read or write or a mix), how big each request is (block size), how many requests to keep in flight at once (queue depth), and how many parallel workers to run (jobs). fio then keeps that many requests outstanding against a test file for a set time and records how long each one took.</p>
+<table>
+  <tr><th>Setting</th><th>Meaning</th><th>Effect</th></tr>
+  <tr><td><code>rw</code></td><td><code>randread</code>, <code>randwrite</code>, <code>randrw</code> (random), <code>read</code>, <code>write</code>, <code>rw</code> (sequential)</td><td>Random stresses IOPS and latency; sequential stresses throughput.</td></tr>
+  <tr><td><code>rwmixread</code></td><td>Share of reads in a mix, in percent</td><td>70 means 70% reads, 30% writes.</td></tr>
+  <tr><td><code>bs</code> or <code>bssplit</code></td><td>Request size, or a weighted mix of sizes</td><td>4k for small-block work, 1M for throughput. <code>4k/60:8k/20:16k/10:64k/10</code> is a realistic desktop mix.</td></tr>
+  <tr><td><code>iodepth</code></td><td>Requests in flight per job</td><td>Higher depth means more pressure and higher latency.</td></tr>
+  <tr><td><code>numjobs</code></td><td>Parallel workers</td><td>Multiplies the pressure; total in flight is jobs times depth.</td></tr>
+  <tr><td><code>rate_iops</code></td><td>A cap on IOPS</td><td>Turns a stress test into a steady, user-like load.</td></tr>
+</table>
+<h2>How vdi-tool runs it</h2>
+<ol class="steps">
+  <li><b>Clean up.</b> Any fio or agent left from an earlier run is stopped.</li>
+  <li><b>Prepare the test file with real data.</b> The file (1 GB by default, settable per run) is written once with random data that cannot be compressed or deduplicated, straight to disk, and flushed. A marker file lets later runs reuse it.</li>
+  <li><b>Report ready and wait.</b> The desktop tells the tool it is prepared and then asks every 2 seconds whether to go.</li>
+  <li><b>Go together.</b> When all desktops are ready (or 90% are ready and nothing has changed for 2 minutes), the tool says go and every desktop starts the timed run at the same moment.</li>
+  <li><b>Timed run.</b> fio runs for exactly the chosen duration and prints its result as JSON.</li>
+  <li><b>Report.</b> The agent posts IOPS, MB/s and latency (average, p50, p95, p99, maximum) for reads and for writes.</li>
+</ol>
+<p>The preparation command:</p>
+<pre>fio --name=prep --filename=test.dat --size=4G --rw=write --bs=1M --ioengine=libaio --iodepth=8
+    --direct=1 --refill_buffers=1 --fallocate=none --end_fsync=1</pre>
+<p>The timed command for the disk stress workload:</p>
+<pre>fio --name=vdi --filename=test.dat --size=4G --rw=randrw --rwmixread=70 --bs=4k --iodepth=16 --numjobs=1
+    --group_reporting --ioengine=libaio --direct=1 --fallocate=none --time_based --runtime=120 --output-format=json</pre>
+<table>
+  <tr><th>Option</th><th>Why it is there</th></tr>
+  <tr><td><code>--direct=1</code></td><td>Bypasses the desktop's own memory cache, so every request really reaches the virtual disk.</td></tr>
+  <tr><td><code>--ioengine=libaio</code></td><td>Linux asynchronous I/O, which is what makes a queue depth above 1 real.</td></tr>
+  <tr><td><code>--refill_buffers=1</code></td><td>Fresh random data for every block, so an array cannot shrink it with compression or deduplication.</td></tr>
+  <tr><td><code>--fallocate=none</code></td><td>Stops fio from only reserving the file. A reserved but unwritten file reads back as zeros without touching the storage.</td></tr>
+  <tr><td><code>--end_fsync=1</code></td><td>Makes sure the prepared data is on the storage before the timed run begins.</td></tr>
+  <tr><td><code>--time_based --runtime</code></td><td>Runs for a fixed time, looping over the file if needed, so all desktops load the storage for the same window.</td></tr>
+  <tr><td><code>--group_reporting</code></td><td>One combined result for all jobs in the desktop.</td></tr>
+</table>
+<div class="note warn"><b>Why the preparation step exists.</b> In early testing the file was only reserved, never written. Reads came back as zeros from the thin pool without any real I/O, and the tool reported 175 Gbit/s from a single drive. Writing real data first, and cross-checking with Proxmox, is what makes the current numbers trustworthy.</div>
+<h2>The disk workloads in the library</h2>
+<table>
+  <tr><th>Workload</th><th>Pattern</th><th>What it tells you</th></tr>
+  <tr><td>VDI knowledge worker</td><td>Random, 30% read, mixed 4k to 64k blocks, depth 2, capped at 25 IOPS per desktop</td><td>Latency under a realistic office load. Use it for "how many users fit".</td></tr>
+  <tr><td>Disk stress</td><td>4k random, 70% read, depth 16, no cap</td><td>Peak small-block IOPS and how latency climbs under pressure.</td></tr>
+  <tr><td>Database</td><td>8k random, 60% read, 4 jobs at depth 32</td><td>Heavy transactional load.</td></tr>
+  <tr><td>Sequential read / write</td><td>1M blocks, 4 jobs at depth 32</td><td>Throughput in GB/s. The one that fills network links.</td></tr>
+  <tr><td>Max throughput</td><td>1M mixed, 8 jobs at depth 64</td><td>The most the path can move, at the cost of very high latency.</td></tr>
+  <tr><td>Custom</td><td>Any of the settings above, saved from the GUI</td><td>Your own application's pattern.</td></tr>
+</table>
+<div class="note"><b>A detail about rate caps.</b> When a mix of block sizes is used, fio counts a rate cap in units of the smallest block. The tool scales the cap by the average block size so that "25 IOPS" really means 25 operations per second. Measured: exactly 25 per desktop.</div>
+
+<h1>A4. DiskSpd: disk workloads on Windows desktops</h1>
+<p class="lead">DiskSpd is Microsoft's storage load tool, the Windows counterpart of fio. The same workload definitions are translated to DiskSpd switches, so a Linux and a Windows batch can be compared.</p>
+<p>The tool keeps one copy of <code>diskspd.exe</code> (downloaded from Microsoft's GitHub releases at install time) and each Windows desktop fetches it on first use. The agent is a PowerShell script that follows the same steps as on Linux: write the test file with random data using write-through, report ready, wait for go, run, parse DiskSpd's XML result and report.</p>
+<table>
+  <tr><th>Workload setting</th><th>DiskSpd switch</th><th>Note</th></tr>
+  <tr><td>Block size</td><td><code>-b4096</code></td><td>DiskSpd uses one size per run, so a mix of sizes becomes its weighted average.</td></tr>
+  <tr><td>Queue depth</td><td><code>-o16</code></td><td>Outstanding requests per thread.</td></tr>
+  <tr><td>Jobs</td><td><code>-t1</code></td><td>Threads.</td></tr>
+  <tr><td>Write share</td><td><code>-w30</code></td><td>Percent writes (100 minus the read share).</td></tr>
+  <tr><td>Random or sequential</td><td><code>-r</code> or <code>-si</code></td><td></td></tr>
+  <tr><td>Duration</td><td><code>-d120 -W0</code></td><td>Timed run, no extra warm-up because the file is already prepared.</td></tr>
+  <tr><td>No caching</td><td><code>-Sh</code></td><td>Turns off Windows software caching and hardware write caching, like <code>--direct=1</code>.</td></tr>
+  <tr><td>Latency</td><td><code>-L -Rxml</code></td><td>Records per-request latency and prints percentiles as XML.</td></tr>
+  <tr><td>Rate cap</td><td><code>-g25i</code></td><td>IOPS limit per thread.</td></tr>
+</table>
+<p>Windows clones are started through the guest agent in the same way as Linux ones. Because the guest agent has no desktop session, the PowerShell agent is launched as a detached process and reports over HTTP. The office, CPU and fill workloads are Linux only for now.</p>
+
+<h1>A5. The built-in workloads: office, CPU, fill and boot storm</h1>
+<h2>Office worker (synthetic)</h2>
+<p>A loop of five actions with a random pause of 0.5 to 2 seconds between them, like a person working. Each action is timed, so the result is a response time, not a throughput.</p>
+<table>
+  <tr><th>Action</th><th>What it does</th><th>What it loads</th></tr>
+  <tr><td>Save</td><td>Writes a 2 to 8 MB document and forces it to disk.</td><td>Storage writes</td></tr>
+  <tr><td>Open</td><td>Reads the document back from disk, not from memory.</td><td>Storage reads</td></tr>
+  <tr><td>Compress</td><td>Compresses 4 MB.</td><td>CPU</td></tr>
+  <tr><td>Compute</td><td>Hashes 48 MB.</td><td>CPU</td></tr>
+  <tr><td>Download</td><td>Fetches a file from the tool over the network.</td><td>Network</td></tr>
+</table>
+<p>The report shows the average and p95 time per action. When the host or storage is overloaded, those times rise. This workload uses no real office applications; EUC Score (section A10) is the tool for that.</p>
+<h2>CPU stress</h2>
+<p>One worker per virtual core, each hashing data in a tight loop for the whole run. The result is the total work done per second. It shows how far the host's CPUs can be oversubscribed before every desktop slows down.</p>
+<h2>Fill disk</h2>
+<p>Writes fresh random data into the desktop and leaves it there. It is for capacity tests: how full can the pool or array get, how does performance change as it fills, and how much does thin provisioning really save. The data is random on purpose so that compression and deduplication cannot hide it. It stops at the size you ask for, when the time limit is reached, or when the desktop has 2 GB left.</p>
+<h2>Boot storm</h2>
+<p>The classic VDI morning. The tool stops every desktop in the batch, then starts them all at once through Proxmox and times each one until its guest agent answers. No software runs inside the desktop for this; the measurement is taken from outside. The result is the time until each desktop is usable, with the mean and the slowest. It works for Linux and Windows.</p>
+
+<h1>A6. QEMU guest agent and cloud-init: how work gets into a desktop</h1>
+<h2>QEMU guest agent</h2>
+<p>The guest agent is a small service inside each desktop that listens on a private channel to the hypervisor. Through the Proxmox API the tool can ask it to run a command, without a network login, SSH key or password. That is how a run starts on hundreds of desktops in a few seconds, and it works the same on Linux and Windows.</p>
+<p>The command the tool sends is short: download the workload agent from the tool and start it in the background with the workload description, the duration and the address to report to. From then on the desktop talks to the tool over plain HTTP. The guest agent is also how the tool renames Windows clones and asks a desktop what went wrong when it fails to report.</p>
+<h2>cloud-init</h2>
+<p>cloud-init is the standard first-boot configurator for Linux images. vdi-tool acts as its own configuration server: every clone gets a small identifier in its virtual hardware (the SMBIOS serial number) that points cloud-init at the tool, which answers with that desktop's name, user and setup script. No configuration drive has to be built per clone, which is one reason 100 linked clones deploy in about a minute.</p>
+<h2>Windows unattended setup</h2>
+<p>For Windows the template is built from the Microsoft ISO with an answer file the tool generates. Setup runs without any clicks, installs the VirtIO drivers and the guest agent, turns on Remote Desktop and shuts down so the machine can become a template.</p>
+
+<h1>A7. Proxmox counters and the validity check</h1>
+<p class="lead">A benchmark that only trusts its own load generator can be fooled. vdi-tool checks every disk run against a second, independent source.</p>
+<p>During a run the tool reads Proxmox's own counters every 10 seconds: host CPU and memory, and for the desktops in the run their disk bytes read and written and network bytes in and out. These come from the hypervisor, not from inside the desktops.</p>
+<table>
+  <tr><th>Check</th><th>Rule</th><th>Result</th></tr>
+  <tr><td>Desktops that failed</td><td>More than 10% of the batch failed or did not report</td><td>Not valid: totals understate the batch.</td></tr>
+  <tr><td></td><td>Some failed, 10% or fewer</td><td>Valid with a note.</td></tr>
+  <tr><td>Real data</td><td>The run predates the real-data preparation</td><td>Not valid.</td></tr>
+  <tr><td>Cross-check</td><td>Desktops claim more than 1.5 times the throughput Proxmox saw on their disks</td><td>Not valid: part of the I/O never reached the storage.</td></tr>
+</table>
+<p>Only samples from the timed window count, so preparation does not blur the result. The same samples give the report its "what limited this run" sentence: for example, host CPU at 88% during a 4k random run points at the host, not the drive.</p>
+
+<h1>A8. Prometheus, the exporters and Grafana</h1>
+<p>These three are the standard open monitoring stack. vdi-tool installs and configures them in its container.</p>
+<figure>
+<svg viewBox="0 0 760 150" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#5b6876"/></marker></defs>
+  <rect x="10" y="12" width="170" height="34" rx="5" fill="#eaf1fb" stroke="#1f5fbf"/><text x="20" y="33" font-size="11" fill="#17202b">Proxmox exporter (per VM)</text>
+  <rect x="10" y="58" width="170" height="34" rx="5" fill="#eaf1fb" stroke="#1f5fbf"/><text x="20" y="79" font-size="11" fill="#17202b">vdi-tool /metrics (runs)</text>
+  <rect x="10" y="104" width="170" height="34" rx="5" fill="#fff" stroke="#5b6876" stroke-dasharray="4 3"/><text x="20" y="125" font-size="11" fill="#17202b">Node exporter (host ports)</text>
+  <rect x="300" y="50" width="160" height="50" rx="5" fill="#fff" stroke="#17202b"/><text x="318" y="72" font-size="12" font-weight="700" fill="#17202b">Prometheus</text><text x="318" y="88" font-size="10" fill="#5b6876">scrapes every 15 s, stores</text>
+  <rect x="580" y="50" width="170" height="50" rx="5" fill="#fff" stroke="#17202b"/><text x="598" y="72" font-size="12" font-weight="700" fill="#17202b">Grafana</text><text x="598" y="88" font-size="10" fill="#5b6876">four dashboards</text>
+  <line x1="180" y1="29" x2="298" y2="66" stroke="#5b6876" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <line x1="180" y1="75" x2="298" y2="75" stroke="#5b6876" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <line x1="180" y1="121" x2="298" y2="86" stroke="#5b6876" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <line x1="460" y1="75" x2="578" y2="75" stroke="#5b6876" stroke-width="1.4" marker-end="url(#ah2)"/>
+</svg>
+<figcaption>Three sources feed Prometheus. The node exporter (dashed) is optional and is the only piece that has to be installed on the Proxmox host itself.</figcaption>
+</figure>
+<table>
+  <tr><th>Piece</th><th>How it works</th></tr>
+  <tr><td>Proxmox exporter</td><td>Asks the Proxmox API for the state of every VM, node and storage and publishes it as metrics: CPU, memory, disk and network counters, storage usage.</td></tr>
+  <tr><td>vdi-tool <code>/metrics</code></td><td>The tool publishes its own run results: whether a run is in progress, desktops by state, and for each finished run its IOPS, throughput, latency, host CPU and validity, labelled by workload, storage and clone type.</td></tr>
+  <tr><td>Node exporter</td><td>Reads the host kernel's counters: bytes, errors and drops per network port, IOPS and latency per disk, CPU by kind of work, memory, pressure. Needed for the per-link view of the 100 Gb ports.</td></tr>
+  <tr><td>Prometheus</td><td>Collects ("scrapes") all of the above every 15 seconds and keeps the history, so any past run can be looked at again.</td></tr>
+  <tr><td>Grafana</td><td>Draws dashboards from Prometheus. Counters are turned into rates, for example bytes per second averaged over one minute.</td></tr>
+</table>
+<h2>The dashboards</h2>
+<table>
+  <tr><th>Dashboard</th><th>Question it answers</th></tr>
+  <tr><td>VDI overview</td><td>What is the host doing right now? Desktops running, host CPU and memory, total desktop disk and network, the ten busiest desktops, storage used, the run in progress.</td></tr>
+  <tr><td>VDI benchmark runs</td><td>How do the runs compare? IOPS, throughput, p95 latency, peak host CPU and validity per run, filtered by workload, storage and clone type.</td></tr>
+  <tr><td>VDI desktop drilldown</td><td>Which desktop is the odd one out? CPU, memory, disk and network for one desktop or any group, and the spread from slowest to fastest.</td></tr>
+  <tr><td>VDI storage and network links</td><td>Where is the bottleneck: network, storage or host? Per port throughput against the 400 Gb/s ceiling, errors and drops, per disk IOPS and latency. Needs the node exporter.</td></tr>
+</table>
+
+<h1>A9. Density tests: finding how many desktops fit</h1>
+<p class="lead">A single run answers "how fast". A density test answers the sizing question: "how many desktops before users notice".</p>
+<p>The tool runs the same workload several times on a growing part of the batch, for example 25, 50, 75 and 100 desktops, and plots latency and per-desktop performance against the number of desktops. You give a target, such as p95 latency under 5 ms, and the report states the largest step that met it.</p>
+<table>
+  <tr><th>Desktops</th><th class="num">Total IOPS</th><th class="num">IOPS each</th><th class="num">p95 latency</th><th class="num">Host CPU</th></tr>
+  <tr><td colspan="5"><b>Disk stress (4k random, no cap)</b></td></tr>
+  <tr><td>10</td><td class="num">201,706</td><td class="num">20,171</td><td class="num">1.54 ms</td><td class="num">7%</td></tr>
+  <tr><td>25</td><td class="num">335,513</td><td class="num">13,421</td><td class="num">2.24 ms</td><td class="num">47%</td></tr>
+  <tr><td>50</td><td class="num">360,725</td><td class="num">7,214</td><td class="num">3.43 ms</td><td class="num">37%</td></tr>
+  <tr><td>75</td><td class="num">366,522</td><td class="num">4,887</td><td class="num">5.44 ms</td><td class="num">51%</td></tr>
+  <tr><td>100</td><td class="num">456,771</td><td class="num">4,568</td><td class="num">6.63 ms</td><td class="num">62%</td></tr>
+  <tr><td colspan="5"><b>Knowledge worker (25 IOPS per desktop)</b></td></tr>
+  <tr><td>25</td><td class="num">625</td><td class="num">25</td><td class="num">1.61 ms</td><td class="num">2.2%</td></tr>
+  <tr><td>50</td><td class="num">1,250</td><td class="num">25</td><td class="num">1.62 ms</td><td class="num">2.6%</td></tr>
+  <tr><td>75</td><td class="num">1,875</td><td class="num">25</td><td class="num">1.66 ms</td><td class="num">2.7%</td></tr>
+  <tr><td>100</td><td class="num">2,500</td><td class="num">25</td><td class="num">1.71 ms</td><td class="num">3.1%</td></tr>
+</table>
+<p>Measured on the test host: one PCIe 5.0 NVMe drive as LVM-thin, full clones, real data. The two tables show the difference between the tools' two modes. Uncapped stress finds the ceiling: total IOPS levels off after about 25 desktops and latency climbs from there. A capped, user-like load barely registers: latency is flat to 100 desktops, so this drive's limit for office users is far beyond 100.</p>
+
+<h1>A10. EUC Score: measuring what the user feels</h1>
+<p class="lead">Everything above measures the infrastructure. EUC Score measures the experience: how quickly applications respond and how smooth the screen is inside a real desktop session.</p>
+<h2>How EUC Score works</h2>
+<ul>
+  <li><b>Simloads</b> are scripted workloads that drive real applications on screen: single applications (type 1), blended personas such as a knowledge worker (type 2), and score tests (type 3).</li>
+  <li>Each Simload is a program with a simple command line, for example <code>SL1-NotepadEdit.exe run 120</code> to run for 120 seconds. Installed Simloads are listed in the Windows registry under <code>HKLM\Software\EUCScore\Simloads</code>.</li>
+  <li><b>Telemetry</b> is collected once per second into a CSV file, and each Simload writes a log, both in <code>C:\EUCScore\Results</code>.</li>
+  <li>For the full visual score, a physical endpoint device connects to the desktop over the remote display protocol and a capture device records the screen. That part is outside vdi-tool.</li>
+</ul>
+<h2>How it fits with vdi-tool</h2>
+<p>vdi-tool deploys the desktops and puts background load on most of them. EUC Score runs on a few "probe" Windows desktops at the same time. The combined answer is the one a sizing decision needs: at N desktops on this storage, this is what a user experiences.</p>
+<table>
+  <tr><th>Step</th><th>State</th></tr>
+  <tr><td>Upload the EUC Score base package to the tool (Templates page)</td><td>Available</td></tr>
+  <tr><td>Windows template option that installs it silently to <code>C:\EUCScore</code> and keeps the <code>vdi</code> user logged on</td><td>Available</td></tr>
+  <tr><td>Probe workload: start Simloads on chosen desktops and bring their results into the run report</td><td>Planned</td></tr>
+</table>
+<div class="note warn"><b>Licence.</b> EUC Score is not part of vdi-tool and the tool never downloads it. You download it from eucscore.com and accept its agreement. The base package is freeware, but organizations with more than 50 users or over US$1M revenue need a paid subscription, and the Enterprise Simloads need a licence file. Simloads need a logged-on Windows session, which is why the template option keeps the user logged on; that stores the password in the Windows registry, so use it for test desktops only.</div>
+
+<h1>A11. Reading the numbers</h1>
+<table>
+  <tr><th>Term</th><th>Meaning</th><th>Good to know</th></tr>
+  <tr><td>IOPS</td><td>Read and write operations completed per second.</td><td>Only comparable at the same block size.</td></tr>
+  <tr><td>Throughput (MB/s, GB/s)</td><td>Data moved per second. IOPS times block size.</td><td>1 GB/s is 8 Gbit/s on the wire.</td></tr>
+  <tr><td>Latency</td><td>Time from sending one request to getting its answer.</td><td>This is what a user feels as "slow".</td></tr>
+  <tr><td>p50, p95, p99</td><td>50%, 95% or 99% of requests were at least this fast.</td><td>p95 and p99 show the bad moments an average hides. Size on p95, not on the average.</td></tr>
+  <tr><td>Queue depth</td><td>Requests in flight at once.</td><td>More depth raises IOPS until the device is saturated, then only latency rises.</td></tr>
+  <tr><td>Block size</td><td>Size of each request.</td><td>Small blocks test IOPS and CPU cost per request; large blocks test bandwidth.</td></tr>
+  <tr><td>Peak host CPU</td><td>Highest host CPU use during the timed window.</td><td>Above about 85% the host, not the storage, is likely the limit.</td></tr>
+  <tr><td>Valid, warning, not valid</td><td>The tool's own judgement of the run (section A7).</td><td>Never quote a run marked not valid.</td></tr>
+</table>
+<h2>Three habits that keep results honest</h2>
+<ol class="steps">
+  <li><b>Compare like with like.</b> Same workload, same duration, same number of desktops, same clone type. Change one thing at a time.</li>
+  <li><b>Look at latency next to throughput.</b> A higher number with ten times the latency is not a better result for users.</li>
+  <li><b>Check what limited the run.</b> If the host CPU was the limit, a faster array will not change the number.</li>
+</ol>
