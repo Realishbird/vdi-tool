@@ -25,6 +25,7 @@ class PVE:
             verify=verify,
             timeout=15.0,
         )
+        self._pace = asyncio.Lock()
 
     @property
     def configured(self) -> bool:
@@ -45,6 +46,10 @@ class PVE:
     async def _send(self, method: str, path: str, timeout: float, **kw: Any) -> Any:
         last = ""
         for attempt in range(6):
+            if method != "GET":
+                # Space out task launches a little; Proxmox drops tasks forked in the same instant.
+                async with self._pace:
+                    await asyncio.sleep(0.15)
             try:
                 r = await self._client.request(method, path, timeout=timeout, **kw)
             except httpx.HTTPError as e:

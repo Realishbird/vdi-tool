@@ -252,14 +252,18 @@ async def build_template(pve: PVE, key: str) -> None:
 
 # -------------------------------------------------------------------- batches
 
-async def _retry(fn, tries: int = 4):
+# Transient Proxmox failures: lock contention, or a task that died as it was forked.
+RETRYABLE = ("lock", "timeout", "busy", "worker", "unexpected status")
+
+
+async def _retry(fn, tries: int = 5):
     for i in range(tries):
         try:
             return await fn()
         except PVEError as e:
-            if i == tries - 1 or not any(w in str(e).lower() for w in ("lock", "timeout", "busy")):
+            if i == tries - 1 or not any(w in str(e).lower() for w in RETRYABLE):
                 raise
-            await asyncio.sleep(2 + i * 3)
+            await asyncio.sleep(2 + i * 4)
 
 
 async def deploy_batch(pve: PVE, bid: str) -> None:
@@ -273,7 +277,17 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
             try:
                 vm["status"] = "cloning"
 
+                attempts = 0
+
                 async def clone():
+                    nonlocal attempts
+                    attempts += 1
+                    if attempts > 1 and vmid in await used_vmids(pve):
+                        # An earlier attempt left a half-made VM behind; clear it if it is ours.
+                        cfg = await pve.get(f"/nodes/{src_node}/qemu/{vmid}/config")
+                        if cfg.get("name") != vm["name"]:
+                            raise PVEError(f"VM {vmid} already exists and is not part of this batch")
+                        await pve.wait_task(src_node, await pve.delete(f"/nodes/{src_node}/qemu/{vmid}", purge=1))
                     upid = await pve.request(
                         "POST", f"/nodes/{src_node}/qemu/{tmpl}/clone", timeout=120,
                         newid=vmid, name=vm["name"], full=b["full"],
@@ -291,7 +305,11 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
                     tags=f"vdi;vdi-batch-{bid}", cores=b.get("cores"), memory=b.get("memory")))
                 vm["status"] = "created"
                 if b["start"]:
-                    await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/status/start"))
+                    async def start():
+                        st = await pve.get(f"/nodes/{node}/qemu/{vmid}/status/current")
+                        if st.get("status") != "running":
+                            await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/status/start"))
+                    await _retry(start)
                     vm["status"] = "running"
             except Exception as e:  # noqa: BLE001
                 vm.update(status="failed", error=str(e))
@@ -318,12 +336,17 @@ async def delete_batch(pve: PVE, bid: str) -> None:
                         # Not ours (for example the clone failed because the ID was taken): leave it alone.
                         vm["status"] = "deleted"
                         return
-                    st = await pve.get(f"/nodes/{node}/qemu/{vmid}/status/current")
-                    if st.get("status") != "stopped":
-                        await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/status/stop"))
-                    upid = await _retry(lambda: pve.delete(
-                        f"/nodes/{node}/qemu/{vmid}", purge=1, **{"destroy-unreferenced-disks": 1}))
-                    await pve.wait_task(node, upid)
+                    async def stop():
+                        st = await pve.get(f"/nodes/{node}/qemu/{vmid}/status/current")
+                        if st.get("status") != "stopped":
+                            await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/status/stop"))
+
+                    async def destroy():
+                        if vmid in await used_vmids(pve):
+                            await pve.wait_task(node, await pve.delete(
+                                f"/nodes/{node}/qemu/{vmid}", purge=1, **{"destroy-unreferenced-disks": 1}))
+                    await _retry(stop)
+                    await _retry(destroy)
                 state.data["hosts"].pop(f"c{vmid}", None)
                 state.data["pw"].pop(f"c{vmid}", None)
                 vm["status"] = "deleted"
