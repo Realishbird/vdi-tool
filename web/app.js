@@ -21,14 +21,17 @@ function show(view) {
   if (!TITLES[view]) view = "overview";
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $(`#view-${view}`).classList.remove("hidden");
-  $("#tmpl-form").addEventListener("submit", async (e) => {
+  // Disable the submit button while a request is in flight so a double click cannot start two jobs.
+const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  try { await api("POST", "/api/templates", formData(e.target)); e.target.closest("details").open = false; e.target.password.value = ""; load(); } catch (x) { fail(x); }
+  const btn = form.querySelector("button"), label = btn.textContent;
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = "Starting…";
+  try { await fn(form); await load(); } catch (x) { fail(x); }
+  btn.disabled = false; btn.textContent = label;
 });
-$("#batch-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  try { await api("POST", "/api/batches", formData(e.target)); load(); } catch (x) { fail(x); }
-});
+submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
+submitOnce($("#batch-form"), (f) => api("POST", "/api/batches", formData(f)));
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
   try {

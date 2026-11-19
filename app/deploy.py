@@ -140,8 +140,17 @@ def ci_done(key: str) -> None:
 
 # ------------------------------------------------------------------ templates
 
+_image_lock = asyncio.Lock()
+
+
 async def _ensure_image(pve: PVE, node: str, img: dict, log) -> str:
     """Make sure the base cloud image is on an 'import' storage; return its volid."""
+    log("waiting for the base image")
+    async with _image_lock:  # concurrent builds share one download
+        return await _ensure_image_locked(pve, node, img, log)
+
+
+async def _ensure_image_locked(pve: PVE, node: str, img: dict, log) -> str:
     stores = await pve.get(f"/nodes/{node}/storage", enabled=1)
     store = next((s["storage"] for s in stores if "import" in s.get("content", "") and s.get("active")), None)
     if not store:
@@ -161,7 +170,10 @@ async def _ensure_image(pve: PVE, node: str, img: dict, log) -> str:
                               content="import", url=img["url"], filename=img["file"])
         await pve.wait_task(node, upid)
     except PVEError as e:
-        log(f"host-side download failed ({e}); downloading through the tool instead")
+        if "403" not in str(e):
+            raise
+        # The API token lacks Sys.AccessNetwork; fetch the image here and upload it.
+        log("downloading the base image through the tool (slower)")
         with tempfile.NamedTemporaryFile(dir=STATE_DIR if STATE_DIR.exists() else None) as f:
             async with httpx.AsyncClient(follow_redirects=True, timeout=None) as c:
                 async with c.stream("GET", img["url"]) as r:
@@ -169,6 +181,7 @@ async def _ensure_image(pve: PVE, node: str, img: dict, log) -> str:
                     async for chunk in r.aiter_bytes(1 << 20):
                         f.write(chunk)
             f.flush(); f.seek(0)
+            log("uploading the base image to the host")
             upid = await pve.upload(node, store, "import", img["file"], f)
             await pve.wait_task(node, upid)
     return volid
