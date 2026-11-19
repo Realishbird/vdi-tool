@@ -91,7 +91,7 @@ function renderDeploy() {
   document.querySelectorAll(".f-node").forEach((el) => opts(el, data.nodes.map((n) => [n.name, n.name])));
   document.querySelectorAll(".f-storage").forEach((el) => opts(el, uniq.map((s) => [s.id, storeLabel(s)])));
   document.querySelectorAll(".f-bridge").forEach((el) => opts(el, [...new Set(data.networks.map((b) => b.iface))].map((b) => [b, b])));
-  opts($("#f-bstorage"), [["", "Same as template (linked clones)"], ...uniq.map((s) => [s.id, `${storeLabel(s)}: full clones if different`])]);
+  opts($("#f-bstorage"), [["", "Same as template"], ...uniq.map((s) => [s.id, `${storeLabel(s)}: full clones if different`])]);
   opts($("#f-image"), Object.entries(dep.images));
   const isoName = (i) => i.volid.split("/").pop(), isVirtio = (i) => /virtio/i.test(i.volid);
   opts($("#f-winiso"), dep.isos.filter((i) => !isVirtio(i)).map((i) => [i.volid, `${isoName(i)} (${bytes(i.size)})`]));
@@ -188,6 +188,17 @@ function renderBench() {
       ${s.completed !== undefined && r.id !== selRun ? `<div class="sub" style="margin-top:8px">${Object.entries(s).filter(([k]) => SUMMARY_LABELS[k] && !["desktops"].includes(k)).slice(0, 5).map(([k, v]) => `${SUMMARY_LABELS[k]}: <b>${v}</b>`).join(" · ")}</div>` : ""}</div>`;
   }).join("") || `<div class="empty">No runs yet. Deploy a batch, then start a run.</div>`;
 
+  // Side-by-side comparison: one table per workload, one row per finished run.
+  const cols = { office: ["mean_ms", "p95_ms", "worst_desktop_ms"], disk: ["total_iops", "iops_per_desktop", "read_lat_ms", "write_lat_ms", "worst_p99_ms"],
+    cpu: ["total_mb_per_s", "mb_per_s_per_desktop"], bootstorm: ["mean_boot_s", "p95_boot_s", "all_up_s"] };
+  $("#compare").innerHTML = Object.entries(cols).map(([p, keys]) => {
+    const done = bench.runs.filter((r) => r.profile === p && r.status === "done");
+    if (done.length < 2) return "";
+    const all = [...keys, "peak_host_cpu"];
+    return `<h2>Compare: ${esc(bench.profiles[p])}</h2><table class="table"><tr><th>When</th><th>Batch</th><th>Storage</th><th>Desktops</th>${all.map((k) => `<th>${SUMMARY_LABELS[k]}</th>`).join("")}</tr>` +
+      done.map((r) => `<tr><td>${new Date(r.created * 1000).toLocaleString()}</td><td>${esc(r.batch_name)}</td><td><b>${esc(r.storage)}</b></td><td class="num">${r.summary.completed}</td>${all.map((k) => `<td class="num">${(r.summary[k] ?? "-").toLocaleString()}</td>`).join("")}</tr>`).join("") + "</table>";
+  }).join("");
+
   const d = runDetail;
   if (!d || d.id !== selRun) { $("#run-detail").innerHTML = ""; return; }
   const smp = d.samples, pts = (k) => smp.filter((s) => s[k] !== undefined).map((s) => [s.t, s[k]]);
@@ -222,7 +233,7 @@ const formData = (form) => {
   for (const el of form.elements) {
     if (!el.name) continue;
     if (el.type === "checkbox") o[el.name] = el.checked;
-    else if (el.value !== "") o[el.name] = el.type === "number" ? Number(el.value) : el.value;
+    else if (el.value !== "") o[el.name] = el.type === "number" ? Number(el.value) : el.name === "full" ? true : el.value;
   }
   return o;
 };
@@ -280,6 +291,7 @@ $("#update").addEventListener("click", async () => {
   if (!window.confirm("Update vdi-tool to the latest revision? The GUI restarts for a few seconds.")) return;
   try { await api("POST", "/api/update"); $("#update").textContent = "Updating…"; setTimeout(() => location.reload(), 20000); } catch (x) { fail(x); }
 });
+$("#grafana").href = `http://${location.hostname}:3000/d/vdi-overview`;
 document.querySelectorAll("nav a[data-view]").forEach((a) => a.addEventListener("click", () => show(a.dataset.view)));
 window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 $("#refresh").addEventListener("click", load);

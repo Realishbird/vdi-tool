@@ -267,7 +267,8 @@ class BatchReq(BaseModel):
     template: int
     count: int = Field(ge=1, le=2000)
     prefix: str = Field("vdi", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,30}$")
-    storage: str | None = None       # set to a different storage for full clones
+    storage: str | None = None       # a different storage always means full clones
+    full: bool = False               # full clones even on the template's own storage
     nodes: list[str] = []            # extra target nodes (shared storage only)
     cores: int | None = Field(None, ge=1, le=128)
     memory: int | None = Field(None, ge=512, le=1048576)
@@ -286,7 +287,7 @@ async def create_batch(req: BatchReq, request: Request):
     cfg = await _call(pve.get(f"/nodes/{node}/qemu/{req.template}/config"))
     disk = next((v for k, v in cfg.items() if k in ("scsi0", "virtio0", "sata0", "ide0") and isinstance(v, str)), "")
     src_storage = disk.split(":")[0]
-    full = bool(req.storage and req.storage != src_storage)
+    full = req.full or bool(req.storage and req.storage != src_storage)
     target_storage = req.storage or src_storage
     shared = any(r.get("type") == "storage" and r.get("storage") == target_storage and r.get("shared") for r in res)
     nodes = [n for n in req.nodes if n] or [node]

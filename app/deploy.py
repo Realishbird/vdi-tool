@@ -31,6 +31,7 @@ IMAGES = {
     },
 }
 TEMPLATE_TAG = "vdi-template"
+FILE_STORES = ("dir", "nfs", "cifs", "glusterfs", "cephfs", "btrfs")
 BUILD_TIMEOUT = 45 * 60
 
 
@@ -216,6 +217,9 @@ async def build_template(pve: PVE, key: str) -> None:
             return
         volid = await _ensure_image(pve, node, IMAGES[t["image"]], log)
         log("creating the VM")
+        # File-based storage (NFS, directory) needs qcow2 disks for snapshots and linked clones.
+        st = await pve.get(f"/storage/{t['storage']}")
+        fmt = ",format=qcow2" if st.get("type") in FILE_STORES else ""
         ci_key = f"t{vmid}"
         state.data["hosts"][ci_key] = t["name"]
         ev = _done_events[ci_key] = asyncio.Event()
@@ -224,7 +228,7 @@ async def build_template(pve: PVE, key: str) -> None:
             vmid=vmid, name=t["name"], memory=t["memory"], cores=t["cores"], cpu="host",
             ostype="l26", scsihw="virtio-scsi-single", agent="enabled=1", vga="virtio",
             net0=f"virtio,bridge={t['bridge']}",
-            scsi0=f"{t['storage']}:0,import-from={volid},discard=on,ssd=1,iothread=1",
+            scsi0=f"{t['storage']}:0,import-from={volid},discard=on,ssd=1,iothread=1{fmt}",
             boot="order=scsi0", tags=TEMPLATE_TAG, smbios1=smbios(f"{t['ci_base']}/ci/{ci_key}/"),
             description="Built by vdi-tool. User: vdi",
         )
@@ -265,6 +269,8 @@ async def _build_windows(pve: PVE, t: dict, log) -> None:
     answer_vol = f"{iso_store}:iso/{answer_name}"
     ev = _done_events[ci_key] = asyncio.Event()
     try:
+        st = await pve.get(f"/storage/{storage}")
+        fmt = ",format=qcow2" if st.get("type") in FILE_STORES else ""
         log("preparing the answer file")
         iso = windows.make_iso(
             windows.unattend_xml(t["name"][:15], _secrets[str(vmid)]),
@@ -281,7 +287,7 @@ async def _build_windows(pve: PVE, t: dict, log) -> None:
             vmid=vmid, name=t["name"], memory=t["memory"], cores=t["cores"], cpu="host",
             ostype="win11", machine="q35", bios="ovmf", scsihw="virtio-scsi-single", agent="enabled=1",
             efidisk0=f"{storage}:1,efitype=4m,pre-enrolled-keys=1", tpmstate0=f"{storage}:1,version=v2.0",
-            scsi0=f"{storage}:{t['disk_gb']},discard=on,ssd=1,iothread=1",
+            scsi0=f"{storage}:{t['disk_gb']},discard=on,ssd=1,iothread=1{fmt}",
             net0=f"virtio,bridge={t['bridge']}",
             ide2=f"{t['win_iso']},media=cdrom", sata0=f"{t['virtio_iso']},media=cdrom",
             sata1=f"{answer_vol},media=cdrom", boot="order=scsi0;ide2", tags=TEMPLATE_TAG,

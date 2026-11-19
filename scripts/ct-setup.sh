@@ -13,3 +13,5 @@ systemctl daemon-reload
 systemctl enable -q vdi-tool
 systemctl restart vdi-tool
 echo "vdi-tool $(git rev-parse --short HEAD) running"
+# The metrics stack is optional: a failure here must never take the GUI down.
+bash scripts/metrics-setup.sh || echo "WARNING: metrics stack setup failed; the GUI still works. Re-run the update to retry."

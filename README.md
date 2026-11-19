@@ -25,7 +25,7 @@ See the top of `install.sh` for the full list.
 - [x] Step 1: installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
 - [ ] Step 2: golden images and fast batch deploy (linked clones). Linux and Windows 11 templates, batch deploy and teardown are in
 - [ ] Step 3: workload harness. Office, disk, CPU and boot storm runs on Linux desktops are in; Windows is next
-- [ ] Step 4: metrics and reports (Prometheus, Grafana, run comparisons)
+- [ ] Step 4: metrics and reports. Prometheus, the Proxmox exporter and Grafana (port 3000) are installed with a ready dashboard, and finished runs are compared side by side
 
 ## Security notes
 
@@ -39,3 +39,5 @@ The tool also serves cloud-init data to the desktops on that port, including the
 - `scripts/`: container setup and systemd unit
 - `app/`: FastAPI backend (Proxmox API client)
 - `web/`: GUI (static HTML, CSS, JS)
+- `agent/`: workload script the desktops download for benchmark runs
+- `grafana/`: provisioned dashboard

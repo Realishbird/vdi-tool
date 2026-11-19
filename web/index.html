@@ -17,8 +17,7 @@
       <a href="#guests" data-view="guests">VMs &amp; containers</a>
       <a href="#deploy" data-view="deploy">Deploy desktops</a>
       <a href="#bench" data-view="bench">Benchmarks</a>
-      <div class="nav-section">Coming next</div>
-      <a class="disabled" title="Step 4">Reports</a>
+      <a id="grafana" target="_blank" rel="noopener">Live metrics (Grafana) ↗</a>
     </nav>
     <div class="sidebar-foot"><span id="foot">…</span><br><a id="update" class="link">Update to latest</a></div>
   </aside>
@@ -97,6 +96,7 @@
           <label>How many<input name="count" type="number" value="10" min="1" max="2000" required></label>
           <label>Name prefix<input name="prefix" value="vdi" required></label>
           <label>Storage<select name="storage" id="f-bstorage"></select></label>
+          <label>Clone type<select name="full"><option value="">Linked (fast, shares the template's disk)</option><option value="1">Full (independent copy of the disk)</option></select></label>
           <label>Cores (blank = template)<input name="cores" type="number" min="1"></label>
           <label>Memory MB (blank = template)<input name="memory" type="number" min="512" step="512"></label>
           <label>Password for "vdi" (Linux only; blank = template's)<input name="password" placeholder="keep the template's" type="text" spellcheck="false" minlength="4" autocomplete="off" data-1p-ignore data-lpignore="true"></label>
@@ -120,6 +120,7 @@
       </div>
       <div id="runs"></div>
       <div id="run-detail"></div>
+      <div id="compare"></div>
     </section>
   </main>
 </div>
