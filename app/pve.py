@@ -39,16 +39,27 @@ class PVE:
             raise PVEError(f"Proxmox API {path} returned {r.status_code}: {r.text[:200]}")
         return r.json().get("data")
 
+    # Proxmox answers 500 with these when it is momentarily too busy to start a task.
+    _BUSY = ("got no worker upid", "start worker failed", "can't lock file", "got timeout", "trying to acquire lock")
+
+    async def _send(self, method: str, path: str, timeout: float, **kw: Any) -> Any:
+        last = ""
+        for attempt in range(6):
+            try:
+                r = await self._client.request(method, path, timeout=timeout, **kw)
+            except httpx.HTTPError as e:
+                raise PVEError(f"cannot reach Proxmox at {self.host}:{self.port}: {e}") from e
+            if r.status_code < 400:
+                return r.json().get("data")
+            last = f"{method} {path} failed ({r.status_code} {r.reason_phrase}): {r.text[:300]}"
+            if r.status_code < 500 or not any(b in (r.text + r.reason_phrase) for b in self._BUSY):
+                break
+            await asyncio.sleep(1.5 * (attempt + 1))
+        raise PVEError(last)
+
     async def request(self, method: str, path: str, timeout: float | None = None, **data: Any) -> Any:
         data = {k: (int(v) if isinstance(v, bool) else v) for k, v in data.items() if v is not None}
-        try:
-            r = await self._client.request(method, path, data=data or None, timeout=timeout or 30.0)
-        except httpx.HTTPError as e:
-            raise PVEError(f"cannot reach Proxmox at {self.host}:{self.port}: {e}") from e
-        if r.status_code >= 400:
-            detail = r.text[:300] or r.reason_phrase
-            raise PVEError(f"{method} {path} failed ({r.status_code} {r.reason_phrase}): {detail}")
-        return r.json().get("data")
+        return await self._send(method, path, timeout or 30.0, data=data or None)
 
     async def post(self, path: str, **data: Any) -> Any:
         return await self.request("POST", path, **data)
@@ -57,13 +68,7 @@ class PVE:
         return await self.request("PUT", path, **data)
 
     async def delete(self, path: str, **params: Any) -> Any:
-        try:
-            r = await self._client.delete(path, params=params or None)
-        except httpx.HTTPError as e:
-            raise PVEError(f"cannot reach Proxmox: {e}") from e
-        if r.status_code >= 400:
-            raise PVEError(f"DELETE {path} failed ({r.status_code}): {r.text[:300] or r.reason_phrase}")
-        return r.json().get("data")
+        return await self._send("DELETE", path, 30.0, params=params or None)
 
     async def upload(self, node: str, storage: str, content: str, filename: str, fileobj) -> Any:
         try:
