@@ -6,6 +6,7 @@ Profiles:
           download, with think time between actions. Reports action latency.
   disk    fio 4k random 70/30 read/write. Reports IOPS and latency.
   cpu     all-core hashing. Reports throughput.
+  fill    write incompressible data and keep it, to test storage at capacity.
 """
 import argparse
 import hashlib
@@ -98,12 +99,42 @@ def office(duration, report, base):
     }
 
 
+SIZE_GB = 1
+
+
+def fill(duration, report, base):
+    """Write SIZE_GB of unique random data and leave it in place."""
+    target_dir = "/var/tmp/vdi-fill"
+    os.makedirs(target_dir, exist_ok=True)
+    existing = sum(os.path.getsize(os.path.join(target_dir, f)) for f in os.listdir(target_dir))
+    goal, written, start, stopped = SIZE_GB << 30, 0, time.time(), ""
+    block = 4 << 20
+    path = os.path.join(target_dir, "fill-%d.bin" % int(start))
+    with open(path, "wb", buffering=0) as f:
+        while existing + written < goal:
+            if time.time() - start > duration:
+                stopped = "time limit reached"
+                break
+            st = os.statvfs(target_dir)
+            if st.f_bavail * st.f_frsize < (2 << 30):
+                stopped = "desktop disk nearly full (2 GB kept free)"
+                break
+            f.write(os.urandom(block))  # fresh random data: cannot be compressed or deduplicated
+            written += block
+            if written % (256 << 20) == 0:
+                os.fsync(f.fileno())
+        os.fsync(f.fileno())
+    secs = max(0.001, time.time() - start)
+    return {"written_gb": round(written / (1 << 30), 1), "total_gb": round((existing + written) / (1 << 30), 1),
+            "mb_per_s": round(written / 1e6 / secs, 1), "seconds": round(secs), "stopped": stopped}
+
+
 def disk(duration, report, base):
     target = os.path.join(WORKDIR, "fio.dat")
-    cmd = ["fio", "--name=vdi", f"--filename={target}", "--size=1G", "--rw=randrw", "--rwmixread=70",
+    cmd = ["fio", "--name=vdi", f"--filename={target}", f"--size={SIZE_GB}G", "--rw=randrw", "--rwmixread=70",
            "--bs=4k", "--iodepth=16", "--ioengine=libaio", "--direct=1", "--time_based",
            f"--runtime={duration}", "--output-format=json"]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 300)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 300 + SIZE_GB * 20)
     try:
         os.remove(target)
     except OSError:
@@ -138,15 +169,18 @@ def cpu(duration, report, base):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", required=True, choices=["office", "disk", "cpu"])
+    ap.add_argument("--profile", required=True, choices=["office", "disk", "cpu", "fill"])
     ap.add_argument("--duration", type=int, default=120)
     ap.add_argument("--report", required=True)
     ap.add_argument("--base", required=True)
+    ap.add_argument("--size-gb", type=int, default=1)
     a = ap.parse_args()
+    global SIZE_GB
+    SIZE_GB = max(1, a.size_gb)
     os.makedirs(WORKDIR, exist_ok=True)
     post(a.report, {"type": "started"})
     try:
-        result = {"office": office, "disk": disk, "cpu": cpu}[a.profile](a.duration, a.report, a.base)
+        result = {"office": office, "disk": disk, "cpu": cpu, "fill": fill}[a.profile](a.duration, a.report, a.base)
         post(a.report, {"type": "result", "result": result})
     except Exception as e:  # report every failure back to the harness
         post(a.report, {"type": "error", "error": str(e)[:300]})

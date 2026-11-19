@@ -19,6 +19,7 @@ PROFILES = {
     "office": "Office worker (documents, compress, compute, downloads)",
     "disk": "Disk stress (fio 4k random, 70% read)",
     "cpu": "CPU stress (all cores)",
+    "fill": "Fill disk (write and keep data, for capacity tests)",
     "bootstorm": "Boot storm (restart every desktop at once)",
 }
 SAMPLE_EVERY = 10
@@ -68,12 +69,12 @@ def pctl(values: list[float], p: float) -> float:
     return s[min(len(s) - 1, int(round(p / 100 * (len(s) - 1))))]
 
 
-def create(bid: str, profile: str, duration: int, ramp: int, base: str) -> dict:
+def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1) -> dict:
     b = state.data["batches"][bid]
     vms = {str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued"}
            for vm in b["vms"] if vm["status"] in ("running", "created")}
     r = {"id": new_id(), "batch": bid, "batch_name": f"{b['prefix']}-{bid}", "profile": profile,
-         "duration": duration, "ramp": ramp, "base": base, "status": "running", "created": time.time(),
+         "duration": duration, "ramp": ramp, "base": base, "size_gb": size_gb, "status": "running", "created": time.time(),
          "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {}}
     runs[r["id"]] = r
     save(r)
@@ -155,15 +156,20 @@ async def _workload(pve: PVE, r: dict) -> None:
         url = f"{r['base']}/api/runs/{r['id']}/report/{vm['vmid']}"
         script = (f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
                   f"nohup python3 /tmp/vdi-workload.py --profile {r['profile']} --duration {r['duration']} "
-                  f"--report {url} --base {r['base']} >/tmp/vdi-workload.log 2>&1 &")
+                  f"--report {url} --base {r['base']} --size-gb {r.get('size_gb', 1)} >/tmp/vdi-workload.log 2>&1 &")
         try:
+            # A freshly deployed desktop may still be booting; give its guest agent time to answer.
+            for _ in range(60):
+                if await _agent_up(pve, vm):
+                    break
+                await asyncio.sleep(5)
             await _exec(pve, vm, ["bash", "-c", script])
             vm["status"] = "starting"
         except PVEError as e:
             vm.update(status="failed", error=f"could not start the workload: {e}")
 
     await asyncio.gather(*(launch(i, vm) for i, vm in enumerate(vms)))
-    deadline = time.time() + r["duration"] + 120
+    deadline = time.time() + r["duration"] + 120 + (r.get("size_gb", 1) * 20 if r["profile"] == "disk" else 0)
     while time.time() < deadline and any(vm["status"] in ("starting", "running") for vm in vms):
         await asyncio.sleep(2)
     for vm in vms:
@@ -220,6 +226,9 @@ def summarize(r: dict) -> dict:
     elif p == "cpu":
         out.update(total_mb_per_s=round(sum(d["mb_per_s"] for d in done)),
                    mb_per_s_per_desktop=round(sum(d["mb_per_s"] for d in done) / len(done)))
+    elif p == "fill":
+        out.update(written_gb=round(sum(d["written_gb"] for d in done), 1), filled_gb_per_desktop=round(sum(d["total_gb"] for d in done) / len(done), 1),
+                   total_write_mb_per_s=round(sum(d["mb_per_s"] for d in done)), stopped_early=sum(1 for d in done if d.get("stopped")))
     elif p == "bootstorm":
         t = [d["boot_s"] for d in done]
         out.update(mean_boot_s=round(sum(t) / len(t), 1), p95_boot_s=round(pctl(t, 95), 1), all_up_s=round(max(t), 1))
@@ -244,5 +253,5 @@ def brief(r: dict) -> dict:
     counts: dict[str, int] = {}
     for vm in r["vms"].values():
         counts[vm["status"]] = counts.get(vm["status"], 0) + 1
-    return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "duration", "ramp", "status",
+    return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "duration", "ramp", "size_gb", "status",
                                   "created", "finished", "summary", "error", "storage")} | {"counts": counts}

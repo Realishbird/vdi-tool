@@ -112,7 +112,7 @@ function renderDeploy() {
     const parts = Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · ");
     return `<div class="card batch"><div class="batch-head">
       <div><b>${esc(b.prefix)}-${esc(b.id)}</b> <span class="status-${esc(b.status)}">${esc(b.status)}</span>
-        <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)} · ${b.custom_password ? "own password" : "template's password"}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
+        <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)} · ${b.custom_password ? "own password" : "template's password"}${b.fill_gb ? ` · fills ${b.fill_gb} GB each` : ""}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
       <div><button class="btn small" data-pw-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Set password</button>
       <button class="btn small danger" data-del-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Delete batch</button></div></div>
       ${meter(parts, done, b.count, `${done} of ${b.count} ready${failed ? `, ${failed} failed` : ""}`, true)}
@@ -167,12 +167,14 @@ const SUMMARY_LABELS = {
   worst_desktop_ms: "Slowest desktop avg (ms)", actions: "Actions done", errors: "Action errors", total_iops: "Total IOPS",
   iops_per_desktop: "IOPS per desktop", read_lat_ms: "Read latency (ms)", write_lat_ms: "Write latency (ms)", worst_p99_ms: "Worst p99 latency (ms)",
   total_mb_per_s: "Total hashed (MB/s)", mb_per_s_per_desktop: "Per desktop (MB/s)", mean_boot_s: "Avg boot (s)", p95_boot_s: "p95 boot (s)",
-  all_up_s: "All desktops up (s)", peak_host_cpu: "Peak host CPU (%)",
+  all_up_s: "All desktops up (s)", written_gb: "Written this run (GB)", filled_gb_per_desktop: "Fill per desktop (GB)",
+  total_write_mb_per_s: "Total write speed (MB/s)", stopped_early: "Stopped early", peak_host_cpu: "Peak host CPU (%)",
 };
 const resultText = (profile, r) => !r ? "-" :
   profile === "office" ? `${r.mean_ms} ms avg · ${r.p95_ms} ms p95 · ${r.actions} actions` :
   profile === "disk" ? `${r.iops} IOPS · read ${r.read.lat_ms} ms · write ${r.write.lat_ms} ms` :
-  profile === "cpu" ? `${r.mb_per_s} MB/s on ${r.cores} cores` : `${r.boot_s} s to boot`;
+  profile === "cpu" ? `${r.mb_per_s} MB/s on ${r.cores} cores` :
+  profile === "fill" ? `${r.written_gb} GB written at ${r.mb_per_s} MB/s · ${r.total_gb} GB held${r.stopped ? ` · ${r.stopped}` : ""}` : `${r.boot_s} s to boot`;
 
 function renderBench() {
   opts($("#f-profile"), Object.entries(bench.profiles));
@@ -190,7 +192,7 @@ function renderBench() {
 
   // Side-by-side comparison: one table per workload, one row per finished run.
   const cols = { office: ["mean_ms", "p95_ms", "worst_desktop_ms"], disk: ["total_iops", "iops_per_desktop", "read_lat_ms", "write_lat_ms", "worst_p99_ms"],
-    cpu: ["total_mb_per_s", "mb_per_s_per_desktop"], bootstorm: ["mean_boot_s", "p95_boot_s", "all_up_s"] };
+    cpu: ["total_mb_per_s", "mb_per_s_per_desktop"], fill: ["written_gb", "filled_gb_per_desktop", "total_write_mb_per_s"], bootstorm: ["mean_boot_s", "p95_boot_s", "all_up_s"] };
   $("#compare").innerHTML = Object.entries(cols).map(([p, keys]) => {
     const done = bench.runs.filter((r) => r.profile === p && r.status === "done");
     if (done.length < 2) return "";
@@ -291,6 +293,7 @@ $("#update").addEventListener("click", async () => {
   if (!window.confirm("Update vdi-tool to the latest revision? The GUI restarts for a few seconds.")) return;
   try { await api("POST", "/api/update"); $("#update").textContent = "Updating…"; setTimeout(() => location.reload(), 20000); } catch (x) { fail(x); }
 });
+$("#f-fill").addEventListener("change", (e) => $("#f-fillgb").classList.toggle("hidden", !e.target.checked));
 $("#grafana").href = `http://${location.hostname}:3000/d/vdi-overview`;
 document.querySelectorAll("nav a[data-view]").forEach((a) => a.addEventListener("click", () => show(a.dataset.view)));
 window.addEventListener("hashchange", () => show(location.hash.slice(1)));

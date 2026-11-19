@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -71,6 +72,7 @@ def hash_pw(password: str) -> str:
 
 state = State()
 _tasks: set[asyncio.Task] = set()
+on_batch_ready: list = []  # callbacks run with the batch id once a deploy finishes
 _done_events: dict[str, asyncio.Event] = {}
 _secrets: dict[str, str] = {}  # plain passwords needed during a Windows build; memory only
 
@@ -374,6 +376,13 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
                     f"/nodes/{node}/qemu/{vmid}/config",
                     smbios1=None if b.get("os") == "windows" else smbios(f"{b['ci_base']}/ci/{ci_key}/"),
                     tags=f"vdi;vdi-batch-{bid}", cores=b.get("cores"), memory=b.get("memory")))
+                if b.get("disk_gb"):
+                    # Growing only; the guest expands its filesystem on first boot.
+                    cur = await pve.get(f"/nodes/{node}/qemu/{vmid}/config")
+                    m = re.search(r"size=(\d+)G", str(cur.get(b.get("disk_key", "scsi0"), "")))
+                    if m and int(m.group(1)) < b["disk_gb"]:
+                        await _retry(lambda: pve.put(f"/nodes/{node}/qemu/{vmid}/resize",
+                                                     disk=b.get("disk_key", "scsi0"), size=f"{b['disk_gb']}G"))
                 vm["status"] = "created"
                 if b["start"]:
                     async def start():
@@ -389,6 +398,11 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
     failed = any(vm["status"] == "failed" for vm in b["vms"])
     b.update(status="partial" if failed else "ready", finished=time.time())
     state.save()
+    for hook in on_batch_ready:
+        try:
+            hook(bid)
+        except Exception:  # noqa: BLE001 - a follow-up action must not undo a finished deploy
+            pass
 
 
 async def delete_batch(pve: PVE, bid: str) -> None:

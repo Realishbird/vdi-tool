@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 import time
 from contextlib import asynccontextmanager
@@ -272,6 +273,9 @@ class BatchReq(BaseModel):
     nodes: list[str] = []            # extra target nodes (shared storage only)
     cores: int | None = Field(None, ge=1, le=128)
     memory: int | None = Field(None, ge=512, le=1048576)
+    disk_gb: int | None = Field(None, ge=8, le=4096)  # grow each desktop's disk to this size
+    fill: bool = False               # after deploy, fill each desktop's disk with real data
+    fill_gb: int | None = Field(None, ge=1, le=4000)
     password: str | None = Field(None, min_length=4, max_length=64)  # blank keeps the template's
     start: bool = True
     concurrency: int = Field(4, ge=1, le=32)
@@ -293,6 +297,18 @@ async def create_batch(req: BatchReq, request: Request):
     nodes = [n for n in req.nodes if n] or [node]
     if nodes != [node] and not shared:
         raise HTTPException(400, f"storage {target_storage} is local to {node}; other nodes need shared storage")
+    fill_gb = None
+    if req.fill:
+        if not req.fill_gb:
+            raise HTTPException(400, "say how many GB to fill per desktop")
+        if not req.start:
+            raise HTTPException(400, "filling needs the desktops started after creating")
+        size = req.disk_gb or int((re.search(r"size=(\d+)G", disk) or [0, 0])[1])
+        if size and req.fill_gb > size - 10:
+            raise HTTPException(400, f"each desktop's disk is {size} GB and the system needs about 10 GB; "
+                                     f"fill at most {max(1, size - 10)} GB or raise Disk GB")
+        await _check_capacity(target_storage, node, req.count, req.fill_gb + 8)
+        fill_gb = req.fill_gb
     used = {int(r["vmid"]) for r in res if r.get("type") in ("qemu", "lxc")}
     # No await between here and saving the batch, so two requests cannot pick the same IDs.
     ids = deploy.free_ids(used | deploy.reserved_ids(), 1000, req.count)
@@ -302,7 +318,8 @@ async def create_batch(req: BatchReq, request: Request):
             "status": "queued"} for i, vmid in enumerate(ids)]
     state.data["batches"][bid] = {
         "template": req.template, "template_name": tmpl.get("name", ""), "template_node": node,
-        "storage": target_storage, "full": full, "cores": req.cores, "memory": req.memory,
+        "storage": target_storage, "full": full, "cores": req.cores, "memory": req.memory, "disk_gb": req.disk_gb, "fill_gb": fill_gb,
+        "disk_key": next((k for k in ("scsi0", "virtio0", "sata0", "ide0") if isinstance(cfg.get(k), str)), "scsi0"),
         "start": req.start, "concurrency": req.concurrency, "prefix": req.prefix,
         "pwhash": deploy.hash_pw(req.password) if req.password else None,
         "os": "windows" if str(cfg.get("ostype", "")).startswith("win") else "linux",
@@ -376,11 +393,39 @@ async def agent_blob():
     return Response(_BLOB, media_type="application/octet-stream")
 
 
+async def _check_capacity(storage: str, node: str, desktops: int, gb_each: int) -> None:
+    """A thin pool that reaches 100% freezes every desktop on it, so never plan past 90%."""
+    res = await _call(pve.get("/cluster/resources", type="storage"))
+    st = next((x for x in res if x.get("storage") == storage and x.get("node") == node), None)
+    if st and st.get("maxdisk"):
+        after = st.get("disk", 0) + desktops * gb_each * (1 << 30)
+        if after > 0.9 * st["maxdisk"]:
+            room = max(0, int((0.9 * st["maxdisk"] - st.get("disk", 0)) / max(1, desktops) / (1 << 30)))
+            raise HTTPException(400, f"{desktops} desktops x {gb_each} GB would take storage {storage} past 90% full. "
+                                     f"The most that fits is {room} GB per desktop.")
+
+
+def _fill_after_deploy(bid: str) -> None:
+    """Batches deployed with the fill option start a Fill disk run as soon as they are up."""
+    b = state.data["batches"].get(bid)
+    if not b or not b.get("fill_gb") or not b.get("start") or b.get("os") == "windows" or runs.active():
+        return
+    r = runs.create(bid, "fill", max(900, b["fill_gb"] * 40), 0, b["ci_base"], b["fill_gb"])
+    if r["vms"]:
+        deploy.spawn(runs.execute(pve, r))
+    else:
+        runs.delete(r["id"])
+
+
+deploy.on_batch_ready.append(_fill_after_deploy)
+
+
 class RunReq(BaseModel):
     batch: str
     profile: str = "office"
     duration: int = Field(120, ge=10, le=3600)
     ramp: int = Field(0, ge=0, le=3600)
+    size_gb: int = Field(1, ge=1, le=2000)  # per desktop: fio file size, or data to write for Fill disk
 
 
 @app.get("/api/runs")
@@ -408,7 +453,10 @@ async def start_run(req: RunReq, request: Request):
         raise HTTPException(400, "Windows desktops only support the boot storm run for now")
     if runs.active():
         raise HTTPException(409, "another run is in progress")
-    r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request))
+    if req.profile in ("fill", "disk"):
+        n = sum(vm["status"] in ("running", "created") for vm in b["vms"])
+        await _check_capacity(b["storage"], b["template_node"], n, req.size_gb)
+    r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request), req.size_gb)
     if not r["vms"]:
         runs.delete(r["id"])
         raise HTTPException(400, "the batch has no running desktops")
