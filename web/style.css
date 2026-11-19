@@ -43,6 +43,7 @@ h2 { font-size: 16px; color: var(--muted); font-weight: 600; margin: 28px 0 12px
 .meter-top { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
 .bar { height: 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.bar.ok > span { background: var(--ok); }
 .bar.warn > span { background: var(--warn); } .bar.bad > span { background: var(--bad); }
 .table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .table th, .table td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }

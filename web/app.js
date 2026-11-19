@@ -8,8 +8,8 @@ const bytes = (b) => {
 };
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const uptime = (s) => { const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600); return d ? `${d}d ${h}h` : `${h}h ${Math.floor((s % 3600) / 60)}m`; };
-const meter = (label, used, total, text) => {
-  const p = pct(used, total); const cls = p > 90 ? "bad" : p > 75 ? "warn" : "";
+const meter = (label, used, total, text, progress = false) => {
+  const p = pct(used, total); const cls = progress ? (p >= 100 ? "ok" : "") : p > 90 ? "bad" : p > 75 ? "warn" : "";
   return `<div class="meter"><div class="meter-top"><span>${label}</span><span>${text ?? `${bytes(used)} / ${bytes(total)}`} · ${p}%</span></div><div class="bar ${cls}"><span style="width:${p}%"></span></div></div>`;
 };
 const CLONE_OK = new Set(["lvmthin", "zfspool", "rbd", "nfs", "dir", "cifs", "glusterfs", "cephfs"]);
@@ -111,7 +111,7 @@ function renderDeploy() {
       <div><b>${esc(b.prefix)}-${esc(b.id)}</b> <span class="status-${esc(b.status)}">${esc(b.status)}</span>
         <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
       <button class="btn small danger" data-del-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Delete batch</button></div>
-      ${meter(parts, done, b.count, `${done} of ${b.count} ready${failed ? `, ${failed} failed` : ""}`)}
+      ${meter(parts, done, b.count, `${done} of ${b.count} ready${failed ? `, ${failed} failed` : ""}`, true)}
       ${b.errors.length ? `<div class="errs">${esc(b.errors.join("\n"))}</div>` : ""}</div>`;
   }).join("") || `<div class="empty">No batches yet.</div>`;
 }
