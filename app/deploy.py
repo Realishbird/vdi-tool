@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import os
+import subprocess
 import tempfile
 import time
 import uuid
@@ -35,7 +36,7 @@ BUILD_TIMEOUT = 45 * 60
 class State:
     def __init__(self) -> None:
         self.path = STATE_DIR / "state.json"
-        self.data: dict[str, dict] = {"templates": {}, "batches": {}, "hosts": {}}
+        self.data: dict[str, dict] = {"templates": {}, "batches": {}, "hosts": {}, "pw": {}}
         try:
             self.data.update(json.loads(self.path.read_text()))
         except (OSError, ValueError):
@@ -44,6 +45,7 @@ class State:
         for t in self.data["templates"].values():
             if t["status"] == "building":
                 t.update(status="failed", error="interrupted by a service restart")
+            t.pop("password", None)
         for b in self.data["batches"].values():
             if b["status"] in ("deploying", "deleting"):
                 b.update(status="interrupted")
@@ -57,6 +59,12 @@ class State:
             tmp.replace(self.path)
         except OSError:
             pass
+
+
+def hash_pw(password: str) -> str:
+    """SHA-512 crypt hash, so the plain password is never stored or served."""
+    return subprocess.run(["openssl", "passwd", "-6", "-stdin"], input=password, text=True,
+                          capture_output=True, check=True).stdout.strip()
 
 
 state = State()
@@ -98,10 +106,14 @@ def ci_meta(key: str) -> str:
 
 def ci_user(key: str) -> str:
     t = state.data["templates"].get(key[1:]) if key.startswith("t") else None
-    if not t:
-        # Clones: everything is already baked into the template.
-        return "#cloud-config\nusers: []\nssh_pwauth: true\n"
-    pw = json.dumps(t["password"])
+    if not t or "pwhash" not in t:
+        # Clones: everything is baked into the template; a batch may set its own password.
+        out = "#cloud-config\nusers: []\nssh_pwauth: true\n"
+        h = state.data["pw"].get(key)
+        if h:
+            out += f"chpasswd:\n  expire: false\n  users:\n    - {{name: vdi, password: {json.dumps(h)}}}\n"
+        return out
+    pw = json.dumps(t["pwhash"])
     done = f"{t['ci_base']}/ci/{key}/done"
     return f"""#cloud-config
 users:
@@ -114,7 +126,7 @@ users:
 chpasswd:
   expire: false
   users:
-    - {{name: vdi, password: {pw}, type: text}}
+    - {{name: vdi, password: {pw}}}
 ssh_pwauth: true
 package_update: true
 packages: [qemu-guest-agent, xfce4, xfce4-terminal, xrdp, dbus-x11, fio, curl]
@@ -233,6 +245,7 @@ async def build_template(pve: PVE, key: str) -> None:
     except Exception as e:  # noqa: BLE001 - surface every failure in the GUI
         t.update(status="failed", error=str(e))
     finally:
+        t.pop("pwhash", None)  # only needed while the build runs
         _done_events.pop(f"t{vmid}", None)
         state.save()
 
@@ -270,6 +283,8 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
                 await _retry(clone)
                 ci_key = f"c{vmid}"
                 state.data["hosts"][ci_key] = vm["name"]
+                if b.get("pwhash"):
+                    state.data["pw"][ci_key] = b["pwhash"]
                 await _retry(lambda: pve.put(
                     f"/nodes/{node}/qemu/{vmid}/config",
                     smbios1=smbios(f"{b['ci_base']}/ci/{ci_key}/"),
@@ -310,6 +325,7 @@ async def delete_batch(pve: PVE, bid: str) -> None:
                         f"/nodes/{node}/qemu/{vmid}", purge=1, **{"destroy-unreferenced-disks": 1}))
                     await pve.wait_task(node, upid)
                 state.data["hosts"].pop(f"c{vmid}", None)
+                state.data["pw"].pop(f"c{vmid}", None)
                 vm["status"] = "deleted"
             except Exception as e:  # noqa: BLE001
                 vm.update(status="failed", error=str(e))

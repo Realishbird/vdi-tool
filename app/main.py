@@ -168,7 +168,7 @@ class TemplateReq(BaseModel):
 
 
 def _public(t: dict) -> dict:
-    return {k: v for k, v in t.items() if k != "password"}
+    return {k: v for k, v in t.items() if k not in ("password", "pwhash")}
 
 
 @app.get("/api/deploy")
@@ -192,7 +192,7 @@ async def deploy_state():
                 s = live[vm["vmid"]].get("status", s)
             counts[s] = counts.get(s, 0) + 1
         errors = [f"{vm['name']}: {vm['error']}" for vm in b["vms"] if vm.get("error")][:5]
-        batches.append({**{k: v for k, v in b.items() if k != "vms"}, "id": bid,
+        batches.append({**{k: v for k, v in b.items() if k not in ("vms", "pwhash")}, "id": bid,
                         "count": len(b["vms"]), "counts": counts, "errors": errors,
                         "first": b["vms"][0]["vmid"], "last": b["vms"][-1]["vmid"]})
     return {"images": {k: v["label"] for k, v in deploy.IMAGES.items()},
@@ -207,7 +207,7 @@ async def create_template(req: TemplateReq, request: Request):
     used = await _call(deploy.used_vmids(pve))
     vmid = deploy.free_ids(used | {int(k) for k in state.data["templates"]}, 9000, 1)[0]
     state.data["templates"][str(vmid)] = {
-        **req.model_dump(), "vmid": vmid, "status": "building", "step": "queued",
+        **req.model_dump(exclude={"password"}), "pwhash": deploy.hash_pw(req.password), "vmid": vmid, "status": "building", "step": "queued",
         "created": time.time(), "ci_base": _ci_base(request)}
     state.save()
     deploy.spawn(deploy.build_template(pve, str(vmid)))
@@ -247,6 +247,7 @@ class BatchReq(BaseModel):
     nodes: list[str] = []            # extra target nodes (shared storage only)
     cores: int | None = Field(None, ge=1, le=128)
     memory: int | None = Field(None, ge=512, le=1048576)
+    password: str | None = Field(None, min_length=4, max_length=64)  # blank keeps the template's
     start: bool = True
     concurrency: int = Field(4, ge=1, le=32)
 
@@ -278,6 +279,7 @@ async def create_batch(req: BatchReq, request: Request):
         "template": req.template, "template_name": tmpl.get("name", ""), "template_node": node,
         "storage": target_storage, "full": full, "cores": req.cores, "memory": req.memory,
         "start": req.start, "concurrency": req.concurrency, "prefix": req.prefix,
+        "pwhash": deploy.hash_pw(req.password) if req.password else None,
         "status": "deploying", "created": time.time(), "ci_base": _ci_base(request), "vms": vms}
     state.save()
     deploy.spawn(deploy.deploy_batch(pve, bid))

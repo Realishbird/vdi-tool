@@ -65,7 +65,7 @@
           <label>Cores<input name="cores" type="number" value="4" min="1"></label>
           <label>Memory (MB)<input name="memory" type="number" value="4096" min="1024" step="512"></label>
           <label>Disk (GB)<input name="disk_gb" type="number" value="32" min="8"></label>
-          <label>Password for user "vdi"<input name="password" type="password" required minlength="4"></label>
+          <label>Password for user "vdi"<input name="password" type="password" required minlength="4" autocomplete="new-password"></label>
           <div class="form-actions"><button class="btn primary">Build template</button>
             <span class="hint">Needs DHCP and internet on the bridge. Takes roughly 10 minutes.</span></div>
         </form>
@@ -81,6 +81,7 @@
           <label>Storage<select name="storage" id="f-bstorage"></select></label>
           <label>Cores (blank = template)<input name="cores" type="number" min="1"></label>
           <label>Memory MB (blank = template)<input name="memory" type="number" min="512" step="512"></label>
+          <label>Password for "vdi" (blank = template's)<input name="password" type="password" minlength="4" autocomplete="new-password"></label>
           <label>Parallel clones<input name="concurrency" type="number" value="4" min="1" max="32"></label>
           <label class="check"><input name="start" type="checkbox" checked> Start after creating</label>
           <div class="form-actions"><button class="btn primary">Deploy batch</button></div>

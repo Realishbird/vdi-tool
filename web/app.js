@@ -255,7 +255,7 @@ const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
   btn.disabled = false; btn.textContent = label;
 });
 submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
-submitOnce($("#batch-form"), (f) => api("POST", "/api/batches", formData(f)));
+submitOnce($("#batch-form"), async (f) => { await api("POST", "/api/batches", formData(f)); f.password.value = ""; });
 submitOnce($("#run-form"), async (f) => { selRun = (await api("POST", "/api/runs", formData(f))).id; runDetail = null; });
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
