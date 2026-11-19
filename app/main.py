@@ -10,11 +10,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 
-from . import deploy, runs
+from . import auth, deploy, runs
 from .deploy import state
 from .pve import PVE, PVEError
 
@@ -41,6 +41,77 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="vdi-tool", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _login_gate(request: Request, call_next):
+    path = request.url.path
+    client = request.client.host if request.client else None
+    if auth.allowed(path, request.cookies.get(auth.COOKIE), request.headers.get("authorization"), client):
+        return await call_next(request)
+    if path.startswith("/api/") or path == "/metrics":
+        return JSONResponse({"detail": "Log in first."}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+class Password(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+
+
+def _session_cookie(resp: Response) -> None:
+    resp.set_cookie(auth.COOKIE, auth.new_session(), max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax")
+
+
+@app.get("/login")
+async def login_page():
+    if not auth.enabled():
+        return RedirectResponse("/", status_code=303)
+    return FileResponse(ROOT / "web" / "login.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/auth")
+async def auth_state(request: Request):
+    on = auth.enabled()
+    return {"enabled": on, "logged_in": on and auth.valid_session(request.cookies.get(auth.COOKIE))}
+
+
+@app.post("/api/login")
+async def login(req: Password, request: Request):
+    client = request.client.host if request.client else "?"
+    if auth.throttled(client):
+        raise HTTPException(429, "Too many wrong passwords. Wait a minute and try again.")
+    if not auth.check_password(req.password):
+        auth.failed(client)
+        raise HTTPException(401, "Wrong password.")
+    resp = JSONResponse({"ok": True})
+    _session_cookie(resp)
+    return resp
+
+
+@app.post("/api/logout")
+async def logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE)
+    return resp
+
+
+@app.post("/api/password")
+async def set_password(req: Password):
+    """Turns the login on, or changes the password. Once a password is set this needs a session."""
+    if len(req.password) < 8:
+        raise HTTPException(400, "Use at least 8 characters.")
+    auth.set_password(req.password)
+    resp = JSONResponse({"ok": True})
+    _session_cookie(resp)
+    return resp
+
+
+@app.delete("/api/password")
+async def remove_password():
+    auth.disable()
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE)
+    return resp
 
 
 async def _call(coro):
@@ -630,6 +701,11 @@ async def annotate_run(rid: str, req: RunNote):
     r["tags"] = [t.strip()[:40] for t in req.tags if t.strip()]
     runs.save(r)
     return {"ok": True}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics():
+    return PlainTextResponse(runs.prometheus(), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/api/report")

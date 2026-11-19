@@ -242,6 +242,7 @@ function renderBench() {
 
 async function api(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401 && url !== "/api/login") { location.href = "/login"; return new Promise(() => {}); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || r.statusText));
   return j;
@@ -260,7 +261,7 @@ const formData = (form) => {
 async function load() {
   const err = $("#error"); err.classList.add("hidden");
   try {
-    const h = await (await fetch("/api/health")).json();
+    const h = await api("GET", "/api/health");
     $("#foot").textContent = `vdi-tool ${h.version}` + (h.pve_version ? ` · PVE ${h.pve_version}` : "");
     const conn = $("#conn");
     if (!h.configured) { conn.textContent = "not configured"; conn.className = "pill bad"; throw new Error("No Proxmox API token configured. Re-run the installer on the Proxmox host."); }
@@ -336,3 +337,32 @@ $("#refresh").addEventListener("click", load);
 show(location.hash.slice(1));
 load();
 setInterval(load, 5000);
+
+// Login for the GUI: off until a password is set here.
+async function authPanel(open) {
+  const a = await api("GET", "/api/auth");
+  const btn = $("#auth-btn"), p = $("#auth-panel");
+  btn.textContent = a.enabled ? "Login: on" : "Login: off";
+  if (open === undefined) return;
+  p.classList.toggle("hidden", !open);
+  if (!open) return;
+  p.innerHTML = `<h2>${a.enabled ? "Login is on" : "Login is off"}</h2>
+    <div class="hint">${a.enabled ? "Everyone needs the admin password to open this tool. Desktops still report without it. Scripts can send the key in /var/lib/vdi-tool/api-key as a Bearer token."
+      : "Anyone who can reach this address can use the tool. Set an admin password to require a login."}</div>
+    <form id="auth-form" class="form"><label>${a.enabled ? "New password" : "Admin password"} (8 characters or more)
+      <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+    <div class="form-actions"><button class="btn primary">${a.enabled ? "Change password" : "Turn login on"}</button>
+    ${a.enabled ? '<button type="button" class="btn" id="auth-out">Log out</button><button type="button" class="btn danger" id="auth-off">Turn login off</button>' : ""}
+    <button type="button" class="btn" id="auth-close">Close</button></div></form>`;
+  $("#auth-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await api("POST", "/api/password", { password: e.target.password.value }); await authPanel(false); } catch (x) { fail(x); }
+  });
+  $("#auth-close").addEventListener("click", () => authPanel(false));
+  if (a.enabled) {
+    $("#auth-out").addEventListener("click", async () => { await api("POST", "/api/logout"); location.href = "/login"; });
+    $("#auth-off").addEventListener("click", async () => { try { await api("DELETE", "/api/password"); await authPanel(false); } catch (x) { fail(x); } });
+  }
+}
+$("#auth-btn").addEventListener("click", () => authPanel($("#auth-panel").classList.contains("hidden")));
+authPanel();

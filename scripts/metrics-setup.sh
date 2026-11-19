@@ -38,6 +38,14 @@ scrape_configs:
       target: ['${PVE_HOST}']
     static_configs:
       - targets: ['127.0.0.1:9221']
+  - job_name: vdi-tool
+    static_configs:
+      - targets: ['127.0.0.1:8080']
+  # Optional: prometheus-node-exporter on the Proxmox host gives per-port network numbers.
+  # If it is not installed the target just shows as down.
+  - job_name: host
+    static_configs:
+      - targets: ['${PVE_HOST}:9100']
 YML
 
 # ---- Grafana (from Grafana's own apt repository)

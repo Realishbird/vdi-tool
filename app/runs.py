@@ -542,3 +542,35 @@ def go(rid: str) -> dict:
     if not r or r["status"] != "running":
         return {"go": False, "over": True}
     return {"go": bool(r.get("go")), "over": False}
+
+
+def _label(v: Any) -> str:
+    return str(v if v is not None else "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def prometheus() -> str:
+    """Run results in the Prometheus text format, so Grafana can chart runs next to host load."""
+    out = ["# HELP vdi_run_active 1 while a benchmark run is in progress.", "# TYPE vdi_run_active gauge",
+           "# HELP vdi_run_desktops Desktops in a run by state.", "# TYPE vdi_run_desktops gauge",
+           "# HELP vdi_run_result Summary results of finished runs (one series per measure).", "# TYPE vdi_run_result gauge",
+           "# HELP vdi_run_valid 1 if the run passed the validity checks, 0.5 with a caveat, 0 if not.", "# TYPE vdi_run_valid gauge",
+           "# HELP vdi_run_finished_timestamp_seconds When the run finished.", "# TYPE vdi_run_finished_timestamp_seconds gauge"]
+    recent = sorted(runs.values(), key=lambda r: r["created"])[-60:]
+    for r in recent:
+        setup = r.get("setup") or {}
+        base = (f'run="{_label(r["id"])}",workload="{_label(r["profile_name"])}",kind="{_label(r["kind"])}",storage="{_label(r["storage"])}",'
+                f'clone="{_label(setup.get("clone"))}",batch="{_label(r["batch_name"])}",series="{_label(r.get("series"))}"')
+        out.append(f'vdi_run_active{{{base}}} {1 if r["status"] == "running" else 0}')
+        if r["status"] == "running":
+            counts: dict[str, int] = {}
+            for vm in r["vms"].values():
+                counts[vm["status"]] = counts.get(vm["status"], 0) + 1
+            out += [f'vdi_run_desktops{{{base},state="{_label(k)}"}} {v}' for k, v in counts.items()]
+            continue
+        for k, v in (r.get("summary") or {}).items():
+            if isinstance(v, (int, float)):
+                out.append(f'vdi_run_result{{{base},measure="{_label(k)}"}} {v}')
+        out.append(f'vdi_run_valid{{{base}}} {dict(valid=1, warning=0.5).get(validity(r)["level"], 0)}')
+        if r.get("finished"):
+            out.append(f'vdi_run_finished_timestamp_seconds{{{base}}} {round(r["finished"])}')
+    return "\n".join(out) + "\n"
