@@ -169,6 +169,23 @@ def _prepare(target, report):
         fh.write(want)
 
 
+def _size(text):
+    text = text.strip().lower()
+    return float(text[:-1]) * {"k": 1 << 10, "m": 1 << 20}[text[-1]] if text[-1] in "km" else float(text)
+
+
+def _bs_factor(bssplit):
+    """fio counts an IOPS limit in units of the smallest block size, so with mixed block
+    sizes the limit must be scaled up by average size / smallest size to get real IOPS."""
+    if not bssplit:
+        return 1
+    try:
+        parts = [(_size(a), float(b)) for a, b in (x.split("/") for x in bssplit.split(":"))]
+        return sum(sz * pct for sz, pct in parts) / sum(pct for _, pct in parts) / min(sz for sz, _ in parts)
+    except (ValueError, KeyError, ZeroDivisionError):
+        return 1
+
+
 def disk(duration, report, base):
     """Run fio with the settings in SPEC["fio"]; all jobs share one file of SIZE_GB.
 
@@ -199,7 +216,7 @@ def disk(duration, report, base):
     if rw in ("randrw", "rw"):
         cmd.append(f"--rwmixread={mix}")
     if f.get("rate_iops"):
-        rate = int(f["rate_iops"])
+        rate = round(int(f["rate_iops"]) * _bs_factor(f.get("bssplit")))
         if rw in ("randrw", "rw"):
             r = max(1, round(rate * mix / 100))
             cmd.append(f"--rate_iops={r},{max(1, rate - r)}")
