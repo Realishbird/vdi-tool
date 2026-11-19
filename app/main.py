@@ -474,6 +474,26 @@ def _rename_after_deploy(bid: str) -> None:
 deploy.on_batch_ready.append(_rename_after_deploy)
 
 
+@app.get("/api/batches/{bid}/names")
+async def batch_names(bid: str):
+    """The computer name each running desktop reports through the guest agent."""
+    b = state.data["batches"].get(bid)
+    if not b:
+        raise HTTPException(404, "batch not found")
+    sem = asyncio.Semaphore(8)
+
+    async def one(vm: dict) -> dict:
+        async with sem:
+            try:
+                r = await pve.get(f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent/get-host-name")
+                return {"vmid": vm["vmid"], "vm": vm["name"], "hostname": (r.get("result") or {}).get("host-name")}
+            except PVEError as e:
+                return {"vmid": vm["vmid"], "vm": vm["name"], "error": str(e)[:120]}
+
+    names = await asyncio.gather(*(one(vm) for vm in b["vms"] if vm["status"] in ("running", "created")))
+    return {"names": names, "unique": len({n.get("hostname") for n in names if n.get("hostname")})}
+
+
 @app.post("/api/batches/{bid}/rename")
 async def rename_batch(bid: str):
     b = state.data["batches"].get(bid)
