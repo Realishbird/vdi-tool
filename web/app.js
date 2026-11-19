@@ -262,6 +262,13 @@ async function load() {
   const err = $("#error"); err.classList.add("hidden");
   try {
     const h = await api("GET", "/api/health");
+    // After an update the open tab still runs the old page; reload once so new features show up.
+    const mine = (new URL(document.querySelector('script[src*="app.js"]').src).searchParams.get("v")) || "";
+    if (mine && h.version && mine !== h.version) {
+      let tried = "";
+      try { tried = sessionStorage.getItem("vdi-reloaded") || ""; sessionStorage.setItem("vdi-reloaded", h.version); } catch (_) { tried = h.version; }
+      if (tried !== h.version) { location.reload(); return; }
+    }
     $("#foot").textContent = `vdi-tool ${h.version}` + (h.pve_version ? ` · PVE ${h.pve_version}` : "");
     const conn = $("#conn");
     if (!h.configured) { conn.textContent = "not configured"; conn.className = "pill bad"; throw new Error("No Proxmox API token configured. Re-run the installer on the Proxmox host."); }
