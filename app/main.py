@@ -9,7 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
@@ -491,12 +491,82 @@ async def start_run(req: RunReq, request: Request):
     if prof["kind"] in ("fill", "fio"):
         n = sum(vm["status"] in ("running", "created") for vm in b["vms"])
         await _check_capacity(b["storage"], b["template_node"], n, req.size_gb)
-    r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request), req.size_gb)
+    r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request), req.size_gb, await _env(b))
     if not r["vms"]:
         runs.delete(r["id"])
         raise HTTPException(400, "the batch has no running desktops")
     deploy.spawn(runs.execute(pve, r))
     return {"id": r["id"]}
+
+
+async def _env(b: dict) -> dict:
+    """Snapshot of the host and storage at run time, so a report still reads right months later."""
+    env: dict = {"tool_version": VERSION, "pve_host": pve.host, "node": b["template_node"]}
+    try:
+        env["pve_version"] = (await pve.get("/version")).get("version")
+        st = await pve.get(f"/nodes/{b['template_node']}/status")
+        cpu = st.get("cpuinfo", {})
+        env.update(cpu_model=cpu.get("model"), cpus=cpu.get("cpus"), sockets=cpu.get("sockets"),
+                   memory_gb=round(st.get("memory", {}).get("total", 0) / 2**30), kernel=st.get("kversion", "").split(" #")[0])
+        sc = await pve.get(f"/storage/{b['storage']}")
+        env.update(storage_type=sc.get("type"), storage_target=sc.get("server") or sc.get("portal") or sc.get("vgname") or sc.get("pool") or sc.get("path"))
+        ss = await pve.get(f"/nodes/{b['template_node']}/storage/{b['storage']}/status")
+        env.update(storage_total_gb=round(ss.get("total", 0) / 2**30), storage_used_gb=round(ss.get("used", 0) / 2**30))
+    except PVEError:
+        pass  # a report with fewer environment facts is better than no run
+    return env
+
+
+class RunNote(BaseModel):
+    note: str = Field("", max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+
+
+@app.patch("/api/runs/{rid}")
+async def annotate_run(rid: str, req: RunNote):
+    r = runs.runs.get(rid)
+    if not r:
+        raise HTTPException(404, "run not found")
+    r["note"] = req.note.strip()
+    r["tags"] = [t.strip()[:40] for t in req.tags if t.strip()]
+    runs.save(r)
+    return {"ok": True}
+
+
+@app.get("/api/report")
+async def report_data(runs_: str = Query(alias="runs")):
+    out = []
+    for rid in [x for x in runs_.split(",") if x][:12]:
+        r = runs.runs.get(rid)
+        if not r:
+            raise HTTPException(404, f"run {rid} not found")
+        out.append(runs.report(r))
+    return {"tool_version": VERSION, "generated": time.time(), "runs": out}
+
+
+def _download(body: str, name: str) -> Response:
+    return Response(body, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/api/runs.csv")
+async def all_runs_csv():
+    return _download(runs.runs_csv(), "vdi-tool-runs.csv")
+
+
+@app.get("/api/runs/{rid}/desktops.csv")
+async def run_csv(rid: str):
+    r = runs.runs.get(rid)
+    if not r:
+        raise HTTPException(404, "run not found")
+    return _download(runs.desktops_csv(r), f"vdi-tool-run-{rid}-desktops.csv")
+
+
+@app.get("/report")
+async def report_page():
+    html = (ROOT / "web" / "report.html").read_text()
+    for f in ("report.css", "report.js"):
+        html = html.replace(f"/static/{f}", f"/static/{f}?v={VERSION}")
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/runs/{rid}/go")

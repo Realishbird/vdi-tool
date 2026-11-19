@@ -212,9 +212,11 @@ def disk(duration, report, base):
 
     def side(name):
         j = job[name]
+        pc = j["clat_ns"].get("percentile", {})
         return {"iops": round(j["iops"]), "mbps": round(j["bw_bytes"] / 1e6, 1),
                 "lat_ms": round(j["clat_ns"]["mean"] / 1e6, 2),
-                "p99_ms": round(j["clat_ns"].get("percentile", {}).get("99.000000", 0) / 1e6, 2)}
+                "p50_ms": round(pc.get("50.000000", 0) / 1e6, 2), "p95_ms": round(pc.get("95.000000", 0) / 1e6, 2),
+                "p99_ms": round(pc.get("99.000000", 0) / 1e6, 2), "max_ms": round(j["clat_ns"].get("max", 0) / 1e6, 2)}
     r, w = side("read"), side("write")
     return {"read": r, "write": w, "iops": r["iops"] + w["iops"], "mbps": round(r["mbps"] + w["mbps"], 1)}
 

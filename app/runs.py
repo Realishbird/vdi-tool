@@ -102,7 +102,13 @@ def pctl(values: list[float], p: float) -> float:
     return s[min(len(s) - 1, int(round(p / 100 * (len(s) - 1))))]
 
 
-def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1) -> dict:
+def setup_of(b: dict) -> dict:
+    """The facts about a batch that a report needs, kept with the run so they outlive the batch."""
+    return {"clone": "full" if b.get("full") else "linked", "template": b.get("template_name"), "os": b.get("os", "linux"),
+            "cores": b.get("cores"), "memory": b.get("memory"), "disk_gb": b.get("disk_gb"), "desktops": b.get("count")}
+
+
+def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1, env: dict | None = None) -> dict:
     b = state.data["batches"][bid]
     vms = {str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued"}
            for vm in b["vms"] if vm["status"] in ("running", "created")}
@@ -110,7 +116,8 @@ def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb:
     r = {"id": new_id(), "batch": bid, "batch_name": f"{b['prefix']}-{bid}", "profile": profile,
          "profile_name": spec["name"], "kind": spec["kind"], "spec": {k: spec[k] for k in ("kind", "fio") if k in spec},
          "duration": duration, "ramp": ramp, "base": base, "size_gb": size_gb, "status": "running", "created": time.time(),
-         "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {}}
+         "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {},
+         "setup": setup_of(b), "env": env or {}, "note": "", "tags": []}
     runs[r["id"]] = r
     save(r)
     return r
@@ -321,6 +328,12 @@ def summarize(r: dict) -> dict:
                    read_lat_ms=round(sum(d["read"]["lat_ms"] for d in done) / len(done), 2),
                    write_lat_ms=round(sum(d["write"]["lat_ms"] for d in done) / len(done), 2),
                    worst_p99_ms=round(max(max(d["read"]["p99_ms"], d["write"]["p99_ms"]) for d in done), 2))
+        if all("p95_ms" in d["read"] for d in done):
+            # Average of the per-desktop percentiles, taking the busier side of each desktop.
+            side = lambda d, k: max(d["read"][k], d["write"][k])  # noqa: E731
+            out.update(p50_ms=round(sum(side(d, "p50_ms") for d in done) / len(done), 2),
+                       p95_ms=round(sum(side(d, "p95_ms") for d in done) / len(done), 2),
+                       max_lat_ms=round(max(side(d, "max_ms") for d in done), 2))
     elif p == "cpu":
         out.update(total_mb_per_s=round(sum(d["mb_per_s"] for d in done)),
                    mb_per_s_per_desktop=round(sum(d["mb_per_s"] for d in done) / len(done)))
@@ -348,12 +361,136 @@ async def execute(pve: PVE, r: dict) -> None:
     save(r)
 
 
+def _timed_samples(r: dict) -> list[dict]:
+    start = r.get("measure_from", 0)
+    return [s for s in r["samples"] if start <= s["t"] <= start + r.get("duration", 0) + SAMPLE_EVERY] or r["samples"]
+
+
+def validity(r: dict) -> dict:
+    """Decide whether a run's numbers can be trusted, with the reasons in plain words."""
+    s, problems, notes = r.get("summary") or {}, [], []
+    total = len(r["vms"]) or 1
+    failed = sum(vm["status"] == "failed" for vm in r["vms"].values())
+    if r["status"] == "running":
+        return {"level": "running", "problems": [], "notes": []}
+    if r["status"] == "failed" or not s.get("completed"):
+        problems.append(r.get("error") or "No desktop completed the run.")
+    elif failed / total > 0.10:
+        problems.append(f"{failed} of {total} desktops failed, so the totals understate what the full batch would do.")
+    elif failed:
+        notes.append(f"{failed} of {total} desktops failed; totals cover the other {total - failed}.")
+    if r["kind"] == "fio" and s.get("completed"):
+        if "measure_from" not in r:
+            problems.append("This run predates the fix that writes real test data. Reads may have returned zeros "
+                            "without touching the storage, so throughput is not trustworthy.")
+        # Cross-check what the desktops claim against what Proxmox itself saw on their disks.
+        seen = sorted(x.get("diskread", 0) + x.get("diskwrite", 0) for x in _timed_samples(r))
+        host = seen[len(seen) // 2] if seen else 0
+        if s.get("total_mbps", 0) > 50 and host and s["total_mbps"] > 1.5 * host:
+            problems.append(f"Desktops reported {s['total_mbps']:,} MB/s but Proxmox saw only about {round(host):,} MB/s "
+                            "on their disks, so part of the I/O never reached the storage.")
+    return {"level": "invalid" if problems else "warning" if notes else "valid", "problems": problems, "notes": notes}
+
+
+def verdict(r: dict) -> str:
+    """One plain sentence on what limited the run."""
+    s = r.get("summary") or {}
+    if not s.get("completed"):
+        return ""
+    cpu = s.get("peak_host_cpu", 0)
+    if r["kind"] == "cpu":
+        return f"CPU test: the host peaked at {cpu}% CPU."
+    if cpu >= 85:
+        return f"The host CPU was the limit (peak {cpu}%). The storage could likely deliver more with fewer or lighter desktops per core."
+    if r["kind"] == "fio":
+        rate = (r.get("spec", {}).get("fio") or {}).get("rate_iops")
+        if rate:
+            return f"Load was capped at {rate} IOPS per desktop, so this shows latency at a fixed load, not the maximum (host CPU peak {cpu}%)."
+        return f"The storage path was the limit: desktops ran flat out while the host CPU peaked at only {cpu}%."
+    if r["kind"] == "bootstorm":
+        return f"All desktops booted at once; the host CPU peaked at {cpu}%."
+    return f"The host CPU peaked at {cpu}%, so the host had headroom."
+
+
+def desktop_metric(kind: str) -> tuple[str, str, bool]:
+    """(result key, label, higher is better) used to rank desktops inside one run."""
+    return {"office": ("mean_ms", "Avg action time (ms)", False), "fio": ("iops", "IOPS", True),
+            "cpu": ("mb_per_s", "Hashed (MB/s)", True), "fill": ("mb_per_s", "Write speed (MB/s)", True),
+            "bootstorm": ("boot_s", "Boot time (s)", False)}.get(kind, ("iops", "IOPS", True))
+
+
+def spread(r: dict) -> dict:
+    key, label, higher = desktop_metric(r["kind"])
+    vals = sorted(vm["result"][key] for vm in r["vms"].values() if vm.get("result") and key in vm["result"])
+    if not vals:
+        return {}
+    return {"key": key, "label": label, "higher_better": higher, "min": vals[0], "p50": pctl(vals, 50), "p95": pctl(vals, 95),
+            "max": vals[-1]}
+
+
+def report(r: dict) -> dict:
+    """Everything a report page needs for one run."""
+    b = state.data["batches"].get(r["batch"])
+    setup = r.get("setup") or (setup_of(b) if b else {})
+    return {**r, "setup": setup, "validity": validity(r), "verdict": verdict(r), "spread": spread(r),
+            "env": r.get("env") or {}, "note": r.get("note", ""), "tags": r.get("tags", [])}
+
+
+def desktops_csv(r: dict) -> str:
+    import csv
+    import io
+    rows = []
+    for vm in r["vms"].values():
+        res, flat = vm.get("result") or {}, {}
+        for k, v in res.items():
+            if isinstance(v, dict):
+                flat.update({f"{k}_{k2}": v2 for k2, v2 in v.items()})
+            else:
+                flat[k] = v
+        io_ = vm.get("io") or {}
+        rows.append({"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": vm["status"], **flat,
+                     "disk_read_bytes": io_.get("diskread"), "disk_written_bytes": io_.get("diskwrite"),
+                     "net_in_bytes": io_.get("netin"), "net_out_bytes": io_.get("netout"), "error": vm.get("error", "")})
+    cols: list[str] = []
+    for row in rows:
+        cols += [c for c in row if c not in cols]
+    cols = [c for c in cols if c != "error"] + ["error"]
+    out = io.StringIO()
+    w = csv.DictWriter(out, cols)
+    w.writeheader()
+    w.writerows(rows)
+    return out.getvalue()
+
+
+def runs_csv() -> str:
+    import csv
+    import io
+    rows = []
+    for r in sorted(runs.values(), key=lambda r: r["created"]):
+        setup = report(r)["setup"]
+        rows.append({"run": r["id"], "started_utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["created"])),
+                     "workload": r["profile_name"], "kind": r["kind"], "status": r["status"], "validity": validity(r)["level"],
+                     "storage": r["storage"], "storage_type": (r.get("env") or {}).get("storage_type", ""),
+                     "clone": setup.get("clone", ""), "batch": r["batch_name"], "duration_s": r["duration"], "ramp_s": r["ramp"],
+                     "size_gb": r.get("size_gb", ""), "tags": " ".join(r.get("tags", [])), "note": r.get("note", ""),
+                     **(r.get("summary") or {})})
+    cols: list[str] = []
+    for row in rows:
+        cols += [c for c in row if c not in cols]
+    out = io.StringIO()
+    w = csv.DictWriter(out, cols)
+    w.writeheader()
+    w.writerows(rows)
+    return out.getvalue()
+
+
 def brief(r: dict) -> dict:
     counts: dict[str, int] = {}
     for vm in r["vms"].values():
         counts[vm["status"]] = counts.get(vm["status"], 0) + 1
     return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "profile_name", "kind", "duration", "ramp", "size_gb", "status",
-                                  "created", "finished", "summary", "error", "storage")} | {"counts": counts}
+                                  "created", "finished", "summary", "error", "storage", "note", "tags")} | {
+        "counts": counts, "validity": validity(r)["level"], "clone": (r.get("setup") or {}).get("clone")}
 
 
 def go(rid: str) -> dict:

@@ -105,3 +105,9 @@ details .form { margin-top: 16px; }
 .chart .tip { position: absolute; pointer-events: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; white-space: nowrap; z-index: 2; }
 .chart .tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 .chart .nodata { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }
+.run-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.run-actions label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+.run-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 18px 0 10px; }
+a.btn { text-decoration: none; display: inline-block; }
+a.btn.off { opacity: .5; cursor: default; }
+.note-form { margin-bottom: 14px; }

@@ -16,6 +16,7 @@ const CLONE_OK = new Set(["lvmthin", "zfspool", "rbd", "nfs", "dir", "cifs", "gl
 const TITLES = { overview: "Overview", storage: "Storage", network: "Network", guests: "VMs & containers", deploy: "Deploy desktops", bench: "Benchmarks" };
 
 let data = null, dep = null, bench = null, selRun = null, runDetail = null;
+const cmp = new Set();  // runs ticked for a comparison report
 
 function show(view) {
   if (!TITLES[view]) view = "overview";
@@ -185,13 +186,19 @@ function renderBench() {
   $("#runs").innerHTML = bench.runs.map((r) => {
     const s = r.summary || {}, c = r.counts, fin = (c.done || 0) + (c.failed || 0), total = Object.values(c).reduce((a, b) => a + b, 0);
     return `<div class="card run ${r.id === selRun ? "selected" : ""}" data-run="${esc(r.id)}"><div class="batch-head">
-      <div><b>${esc(r.profile_name || bench.profiles[r.profile] || r.profile)}</b> <span class="status-${esc(r.status)}">${esc(r.status)}</span>
-        <div class="sub">${esc(r.batch_name)} · ${total} desktops on ${esc(r.storage)} · ${new Date(r.created * 1000).toLocaleString()}${r.kind === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}${["fio", "fill"].includes(r.kind) ? `, ${r.size_gb} GB each` : ""}`}</div></div>
-      <button class="btn small danger" data-del-run="${esc(r.id)}" ${r.status === "running" ? "disabled" : ""}>Delete</button></div>
+      <div><b>${esc(r.profile_name || bench.profiles[r.profile] || r.profile)}</b> <span class="status-${esc(r.status)}">${esc(r.status)}</span>${r.validity === "invalid" && r.status === "done" ? ` <span class="pill bad" title="Open the report to see why">not valid</span>` : ""}${(r.tags || []).map((t) => ` <span class="pill">${esc(t)}</span>`).join("")}
+        <div class="sub">${esc(r.batch_name)} · ${total} desktops${r.clone ? ` (${esc(r.clone)} clones)` : ""} on ${esc(r.storage)} · ${new Date(r.created * 1000).toLocaleString()}${r.kind === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}${["fio", "fill"].includes(r.kind) ? `, ${r.size_gb} GB each` : ""}`}</div></div>
+      <div class="run-actions"><label class="hint"><input type="checkbox" data-cmp="${esc(r.id)}" ${cmp.has(r.id) ? "checked" : ""}> Compare</label>
+        <a class="btn small" href="/report?runs=${esc(r.id)}" target="_blank">Report</a>
+        <button class="btn small danger" data-del-run="${esc(r.id)}" ${r.status === "running" ? "disabled" : ""}>Delete</button></div></div>
       ${r.status === "running" ? meter(Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · "), fin, total, `${fin} of ${total} finished`, true) : ""}
       ${r.error ? `<div class="errs">${esc(r.error)}</div>` : ""}
       ${s.completed !== undefined && r.id !== selRun ? `<div class="sub" style="margin-top:8px">${Object.entries(s).filter(([k]) => SUMMARY_LABELS[k] && !["desktops"].includes(k)).slice(0, 5).map(([k, v]) => `${SUMMARY_LABELS[k]}: <b>${v}</b>`).join(" · ")}</div>` : ""}</div>`;
   }).join("") || `<div class="empty">No runs yet. Deploy a batch, then start a run.</div>`;
+  [...cmp].forEach((id) => { if (!bench.runs.some((r) => r.id === id)) cmp.delete(id); });
+  const order = bench.runs.filter((r) => cmp.has(r.id)).reverse().map((r) => r.id);  // oldest first = baseline
+  $("#run-tools").innerHTML = bench.runs.length ? `<a class="btn small ${order.length < 2 ? "off" : "primary"}" ${order.length < 2 ? "" : `href="/report?runs=${order.join(",")}" target="_blank"`}>Compare ${order.length || ""} selected runs</a>
+    <a class="btn small" href="/api/runs.csv">All runs as CSV</a><span class="hint">Tick Compare on two or more runs for a side by side report. The oldest ticked run is the baseline.</span>` : "";
 
   // Side-by-side comparison: one table per workload, one row per finished run.
   const cols = { office: ["mean_ms", "p95_ms", "worst_desktop_ms"], fio: ["total_iops", "total_mbps", "total_gbit", "read_lat_ms", "write_lat_ms", "worst_p99_ms"],
@@ -222,7 +229,12 @@ function renderBench() {
     <td>${vm.error ? `<span class="errs">${esc(vm.error)}</span>` : esc(resultText(d.kind, vm.result))}</td>
     <td class="num">${vm.io ? `${bytes(vm.io.diskread)} / ${bytes(vm.io.diskwrite)}` : "-"}</td>
     <td class="num">${vm.io ? `${bytes(vm.io.netin)} / ${bytes(vm.io.netout)}` : "-"}</td></tr>`).join("");
+  if (document.activeElement?.closest?.("#note-form")) return;  // do not wipe a note while it is being typed
   $("#run-detail").innerHTML = `<h2>Run ${esc(d.id)}: ${esc(d.profile_name || d.profile)}</h2>
+    <form id="note-form" class="form note-form" data-rid="${esc(d.id)}"><label>Tags (comma separated, e.g. array model, protocol)<input name="tags" value="${esc((d.tags || []).join(", "))}"></label>
+      <label>Notes for the report<input name="note" value="${esc(d.note || "")}"></label>
+      <div class="form-actions"><button class="btn">Save</button><a class="btn primary" href="/report?runs=${esc(d.id)}" target="_blank">Open report</a>
+      <a class="btn" href="/api/runs/${esc(d.id)}/desktops.csv">Desktops CSV</a></div></form>
     ${tiles ? `<div class="tiles">${tiles}</div>` : ""}<div class="charts">${charts}</div>
     <h2>Per desktop</h2><table class="table"><tr><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th>Result</th><th>Disk read / written</th><th>Net in / out</th></tr>${rows}</table>`;
 }
@@ -283,6 +295,8 @@ submitOnce($("#run-form"), async (f) => { selRun = (await api("POST", "/api/runs
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
   const card = e.target.closest(".run");
+  if (t.cmp) { e.target.checked ? cmp.add(t.cmp) : cmp.delete(t.cmp); renderBench(); return; }
+  if (e.target.closest(".run-actions a, .run-actions label")) return;
   if (card && !t.delRun) { selRun = card.dataset.run; runDetail = null; load(); return; }
   try {
     if (t.delProf) { await api("DELETE", `/api/profiles/${t.delProf}`); load(); }
@@ -293,6 +307,15 @@ document.addEventListener("click", async (e) => {
     }
     if (t.delBatch && window.confirm(`Stop and permanently delete every desktop in batch ${t.delBatch}?`)) { await api("DELETE", `/api/batches/${t.delBatch}`); load(); }
     if (t.delTmpl && window.confirm(`Permanently delete template ${t.delTmpl}? Linked clones made from it must be deleted first.`)) { await api("DELETE", `/api/templates/${t.delTmpl}`); load(); }
+  } catch (x) { fail(x); }
+});
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "note-form") return;
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api("PATCH", `/api/runs/${f.dataset.rid}`, { note: f.note.value, tags: f.tags.value.split(",").map((x) => x.trim()).filter(Boolean) });
+    document.activeElement?.blur(); runDetail = null; load();
   } catch (x) { fail(x); }
 });
 $("#update").addEventListener("click", async () => {
