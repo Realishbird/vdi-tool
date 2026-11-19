@@ -49,10 +49,9 @@ The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/bui
 - [x] Installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
 - [x] Golden templates (Linux and Windows 11), batch deploy and teardown
 - [x] Workload harness on Linux desktops, workload library, capacity fill, boot storm
-- [x] Prometheus and Grafana, run reports, run comparison, export
-- [ ] Windows: unique computer names per clone and disk workloads (only boot storm works on Windows today)
+- [x] Prometheus and Grafana, run reports, run comparison, density tests, export
+- [x] Windows: unique computer name per clone and disk workloads with DiskSpd (office, CPU and fill are Linux only; clones still share a machine ID)
 - [ ] Array testing: storage targets per protocol (NFS, iSCSI, NVMe-oF, FC), per-link network metrics, host-direct fio
-- [ ] Density report: "supports N users at p95 below X ms"
 - [ ] Real-applications workload, GUI login, narrower API token
 
 ## Security notes
