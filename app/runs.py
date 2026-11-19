@@ -91,8 +91,11 @@ def delete(rid: str) -> None:
 _load()
 
 
+series_busy: set[str] = set()  # density series that still have steps to run
+
+
 def active() -> dict | None:
-    return next((r for r in runs.values() if r["status"] == "running"), None)
+    return next((r for r in runs.values() if r["status"] == "running"), None) or ({"id": "series"} if series_busy else None)
 
 
 def pctl(values: list[float], p: float) -> float:
@@ -108,16 +111,19 @@ def setup_of(b: dict) -> dict:
             "cores": b.get("cores"), "memory": b.get("memory"), "disk_gb": b.get("disk_gb"), "desktops": b.get("count")}
 
 
-def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1, env: dict | None = None) -> dict:
+def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1, env: dict | None = None,
+           limit: int | None = None, series: str | None = None) -> dict:
     b = state.data["batches"][bid]
     vms = {str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued"}
-           for vm in b["vms"] if vm["status"] in ("running", "created")}
+           for vm in [v for v in b["vms"] if v["status"] in ("running", "created")][:limit]}
     spec = all_profiles()[profile]
     r = {"id": new_id(), "batch": bid, "batch_name": f"{b['prefix']}-{bid}", "profile": profile,
          "profile_name": spec["name"], "kind": spec["kind"], "spec": {k: spec[k] for k in ("kind", "fio") if k in spec},
          "duration": duration, "ramp": ramp, "base": base, "size_gb": size_gb, "status": "running", "created": time.time(),
          "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {},
          "setup": setup_of(b), "env": env or {}, "note": "", "tags": []}
+    if series:
+        r["series"] = series
     runs[r["id"]] = r
     save(r)
     return r
@@ -484,12 +490,27 @@ def runs_csv() -> str:
     return out.getvalue()
 
 
+async def execute_series(pve: PVE, sid: str, steps: list[int], make) -> None:
+    """Density test: the same workload on a growing number of desktops, one step after another."""
+    series_busy.add(sid)
+    try:
+        for n in steps:
+            r = make(n)
+            if not r["vms"]:
+                delete(r["id"])
+                break
+            await execute(pve, r)
+            await asyncio.sleep(15)  # let the storage settle between steps
+    finally:
+        series_busy.discard(sid)
+
+
 def brief(r: dict) -> dict:
     counts: dict[str, int] = {}
     for vm in r["vms"].values():
         counts[vm["status"]] = counts.get(vm["status"], 0) + 1
     return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "profile_name", "kind", "duration", "ramp", "size_gb", "status",
-                                  "created", "finished", "summary", "error", "storage", "note", "tags")} | {
+                                  "created", "finished", "summary", "error", "storage", "note", "tags", "series")} | {
         "counts": counts, "validity": validity(r)["level"], "clone": (r.get("setup") or {}).get("clone")}
 
 

@@ -67,3 +67,5 @@ footer { margin-top: 34px; padding-top: 10px; border-top: 1px solid var(--line);
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   h2 { break-after: avoid; } tr, .tile, .banner { break-inside: avoid; }
 }
+table.tight th, table.tight td { padding: 6px 7px; font-size: 13px; }
+table.tight th { font-size: 11px; white-space: normal; }

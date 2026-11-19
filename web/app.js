@@ -187,8 +187,9 @@ function renderBench() {
     const s = r.summary || {}, c = r.counts, fin = (c.done || 0) + (c.failed || 0), total = Object.values(c).reduce((a, b) => a + b, 0);
     return `<div class="card run ${r.id === selRun ? "selected" : ""}" data-run="${esc(r.id)}"><div class="batch-head">
       <div><b>${esc(r.profile_name || bench.profiles[r.profile] || r.profile)}</b> <span class="status-${esc(r.status)}">${esc(r.status)}</span>${r.validity === "invalid" && r.status === "done" ? ` <span class="pill bad" title="Open the report to see why">not valid</span>` : ""}${(r.tags || []).map((t) => ` <span class="pill">${esc(t)}</span>`).join("")}
-        <div class="sub">${esc(r.batch_name)} · ${total} desktops${r.clone ? ` (${esc(r.clone)} clones)` : ""} on ${esc(r.storage)} · ${new Date(r.created * 1000).toLocaleString()}${r.kind === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}${["fio", "fill"].includes(r.kind) ? `, ${r.size_gb} GB each` : ""}`}</div></div>
+        <div class="sub">${esc(r.batch_name)} · ${total} desktops${r.clone ? ` (${esc(r.clone)} clones)` : ""} on ${esc(r.storage)}${r.series ? " · density step" : ""} · ${new Date(r.created * 1000).toLocaleString()}${r.kind === "bootstorm" ? "" : ` · ${r.duration}s${r.ramp ? `, ${r.ramp}s ramp` : ""}${["fio", "fill"].includes(r.kind) ? `, ${r.size_gb} GB each` : ""}`}</div></div>
       <div class="run-actions"><label class="hint"><input type="checkbox" data-cmp="${esc(r.id)}" ${cmp.has(r.id) ? "checked" : ""}> Compare</label>
+        ${r.series ? `<a class="btn small" href="/report?series=${esc(r.series)}" target="_blank">Density report</a>` : ""}
         <a class="btn small" href="/report?runs=${esc(r.id)}" target="_blank">Report</a>
         <button class="btn small danger" data-del-run="${esc(r.id)}" ${r.status === "running" ? "disabled" : ""}>Delete</button></div></div>
       ${r.status === "running" ? meter(Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · "), fin, total, `${fin} of ${total} finished`, true) : ""}
@@ -291,7 +292,7 @@ submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", f
 submitOnce($("#win-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
 submitOnce($("#batch-form"), async (f) => { await api("POST", "/api/batches", formData(f)); f.password.value = ""; });
 submitOnce($("#prof-form"), async (f) => { await api("POST", "/api/profiles", formData(f)); f.name.value = ""; });
-submitOnce($("#run-form"), async (f) => { selRun = (await api("POST", "/api/runs", formData(f))).id; runDetail = null; });
+submitOnce($("#run-form"), async (f) => { const r = await api("POST", "/api/runs", formData(f)); if (r.id) selRun = r.id; runDetail = null; });
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
   const card = e.target.closest(".run");

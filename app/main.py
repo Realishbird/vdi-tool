@@ -426,6 +426,7 @@ class RunReq(BaseModel):
     duration: int = Field(120, ge=10, le=3600)
     ramp: int = Field(0, ge=0, le=3600)
     size_gb: int = Field(1, ge=1, le=2000)  # per desktop: fio file size, or data to write for Fill disk
+    steps: str | None = Field(None, pattern=r"^\s*\d+(\s*,\s*\d+){1,11}\s*$")  # density test: desktop counts, e.g. 10,25,50,100
 
 
 @app.get("/api/runs")
@@ -491,7 +492,19 @@ async def start_run(req: RunReq, request: Request):
     if prof["kind"] in ("fill", "fio"):
         n = sum(vm["status"] in ("running", "created") for vm in b["vms"])
         await _check_capacity(b["storage"], b["template_node"], n, req.size_gb)
-    r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request), req.size_gb, await _env(b))
+    env, base = await _env(b), _ci_base(request)
+    if req.steps:
+        have = sum(vm["status"] in ("running", "created") for vm in b["vms"])
+        steps = sorted({int(x) for x in req.steps.split(",")})
+        if prof["kind"] == "fill":
+            raise HTTPException(400, "Fill disk cannot be run as a density test")
+        if steps[0] < 1 or steps[-1] > have:
+            raise HTTPException(400, f"steps must be between 1 and {have}, the number of running desktops in the batch")
+        sid = deploy.new_id()
+        deploy.spawn(runs.execute_series(pve, sid, steps, lambda n: runs.create(
+            req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env, limit=n, series=sid)))
+        return {"series": sid, "steps": steps}
+    r = runs.create(req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env)
     if not r["vms"]:
         runs.delete(r["id"])
         raise HTTPException(400, "the batch has no running desktops")
@@ -534,9 +547,14 @@ async def annotate_run(rid: str, req: RunNote):
 
 
 @app.get("/api/report")
-async def report_data(runs_: str = Query(alias="runs")):
+async def report_data(runs_: str = Query("", alias="runs"), series: str = ""):
     out = []
-    for rid in [x for x in runs_.split(",") if x][:12]:
+    ids = [x for x in runs_.split(",") if x][:12]
+    if series:
+        ids = [r["id"] for r in sorted(runs.runs.values(), key=lambda r: len(r["vms"])) if r.get("series") == series]
+        if not ids:
+            raise HTTPException(404, "density test not found")
+    for rid in ids:
         r = runs.runs.get(rid)
         if not r:
             raise HTTPException(404, f"run {rid} not found")

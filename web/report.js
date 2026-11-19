@@ -171,14 +171,71 @@ function compare(rs) {
     <h2>Environment</h2>${kv(envRows(rs.find((r) => r.env?.pve_version) || base))}`;
 }
 
+// Value against number of desktops. An optional dashed line marks the target.
+function xy(title, unit, points, target) {
+  points = points.filter((p) => typeof p[1] === "number");
+  if (points.length < 2) return "";
+  const W = 480, H = 190, L = 54, R = 12, T = 10, B = 34;
+  const x0 = 0, x1 = points.at(-1)[0], max = niceMax(Math.max(...points.map((p) => p[1]), target ?? 0));
+  const x = (v) => L + ((v - x0) / (x1 - x0 || 1)) * (W - L - R), y = (v) => T + (1 - v / max) * (H - T - B);
+  const grid = [0, 0.5, 1].map((f) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(max * f)}" y2="${y(max * f)}"/><text class="axis" x="${L - 6}" y="${y(max * f) + 4}" text-anchor="end">${fmtAxis(max * f)}</text>`).join("");
+  const ticks = points.map((p) => `<text class="axis" x="${x(p[0])}" y="${H - 18}" text-anchor="middle">${p[0]}</text>`).join("");
+  const line = `<polyline fill="none" stroke="${S1}" stroke-width="2" points="${points.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ")}"/>` +
+    points.map((p) => `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="3.5" fill="${S1}"/>`).join("");
+  const tl = typeof target === "number" ? `<line x1="${L}" x2="${W - R}" y1="${y(target)}" y2="${y(target)}" stroke="${S2}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${L + 4}" y="${y(target) - 5}" font-size="11" fill="${S2}">target ${num(target)}</text>` : "";
+  return `<div class="chart"><h3>${esc(title)}${unit ? ` <span class="muted">(${esc(unit)})</span>` : ""}</h3>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${grid}${ticks}${tl}${line}<text class="axis" x="${(L + W - R) / 2}" y="${H - 3}" text-anchor="middle">desktops running the workload</text></svg></div>`;
+}
+
+const DENSITY = { fio: ["total_iops", "p95_ms", "iops_per_desktop"], office: ["actions", "mean_ms", null], cpu: ["total_mb_per_s", null, "mb_per_s_per_desktop"], bootstorm: [null, "all_up_s", "mean_boot_s"] };
+
+function density(rs) {
+  const q = new URLSearchParams(location.search), base = rs[0], n = (r) => Object.keys(r.vms).length;
+  const [thru, lat, per] = DENSITY[base.kind] || [];
+  const defKey = lat || per || thru;
+  const [qk, qv] = (q.get("target") || "").split(":"), slaKey = METRICS[qk] ? qk : defKey;
+  const sla = METRICS[qk] && qv !== "" && !isNaN(Number(qv)) ? Number(qv) : null;
+  const ok = (r) => { const v = r.summary?.[slaKey]; return typeof v !== "number" || r.validity.level === "invalid" ? null : METRICS[slaKey][1] ? v >= sla : v <= sla; };
+  // The answer is the largest step that passes with every smaller step passing too.
+  let best = null;
+  if (sla !== null) for (const r of rs) { if (ok(r)) best = r; else break; }
+  const keys = [thru, per, "p50_ms", lat, "worst_p99_ms", "mean_boot_s", "peak_host_cpu"].filter((k, i, a) => k && a.indexOf(k) === i && rs.some((r) => r.summary?.[k] !== undefined));
+  const firstFail = sla !== null ? rs.find((r) => ok(r) === false) : null;
+  const answer = sla === null
+    ? `<div class="banner warning"><b>Set a target to get the answer</b>Pick a measure and a limit below, for example ${esc(METRICS[defKey][0])}, and the report states how many desktops this storage supports.</div>`
+    : best
+      ? `<div class="banner valid"><b>Supports ${n(best)} desktops${best === rs.at(-1) ? " or more" : ""}</b>${esc(METRICS[slaKey][0])} stayed ${METRICS[slaKey][1] ? "at or above" : "at or below"} ${num(sla)} up to ${n(best)} desktops (measured ${num(best.summary[slaKey])}).${firstFail ? ` At ${n(firstFail)} desktops it was ${num(firstFail.summary?.[slaKey])}.` : " The largest step still passed, so the limit is higher than this test went."}</div>`
+      : `<div class="banner invalid"><b>The target was missed at the smallest step</b>${esc(METRICS[slaKey][0])} was ${num(rs[0].summary?.[slaKey])} with ${n(rs[0])} desktops, against a target of ${num(sla)}.</div>`;
+  const eff = per && typeof base.summary?.[per] === "number" && base.summary[per] ? (r) => (typeof r.summary?.[per] === "number" ? `${Math.round((r.summary[per] / base.summary[per]) * 100)}%` : "-") : null;
+  const opts = Object.keys(METRICS).filter((k) => rs.some((r) => r.summary?.[k] !== undefined)).map((k) => `<option value="${k}" ${k === slaKey ? "selected" : ""}>${METRICS[k][0]}</option>`).join("");
+  const charts = [thru && xy(METRICS[thru][0], "", rs.map((r) => [n(r), r.summary?.[thru]]), slaKey === thru ? sla : undefined),
+    lat && xy(METRICS[lat][0], "", rs.map((r) => [n(r), r.summary?.[lat]]), slaKey === lat ? sla : undefined),
+    per && xy(METRICS[per][0], "", rs.map((r) => [n(r), r.summary?.[per]]), slaKey === per ? sla : undefined),
+    xy("Peak host CPU (%)", "", rs.map((r) => [n(r), r.summary?.peak_host_cpu]))].filter(Boolean).join("");
+  document.title = `Density test: ${base.profile_name}`;
+  $("#exports").innerHTML = `<a class="btn" href="/api/runs.csv">All runs CSV</a>`;
+  return `<h1>Density test: ${esc(base.profile_name)}</h1>
+    <p class="sub">${rs.length} steps from ${n(base)} to ${n(rs.at(-1))} desktops · ${esc(base.storage)}${base.setup?.clone ? ` · ${esc(base.setup.clone)} clones` : ""} · ${esc(when(base.created))}</p>
+    ${answer}
+    <form class="sla noprint" id="sla">Target: <select name="k">${opts}</select> <input name="v" type="number" step="any" placeholder="limit" value="${sla ?? ""}"> <button>Apply</button><span class="muted">Lower is better for latency and boot times, higher for IOPS and throughput.</span></form>
+    <h2>How results change as desktops are added</h2><div class="charts">${charts}</div>
+    <h2>Step by step</h2>
+    <table class="tight"><tr><th class="num">Desktops</th><th class="num">Completed</th>${keys.map((k) => `<th class="num">${METRICS[k][0]}</th>`).join("")}${eff ? '<th class="num">Per desktop vs first step</th>' : ""}<th>Validity</th>${sla !== null ? "<th>Target</th>" : ""}<th class="noprint"></th></tr>
+      ${rs.map((r) => { const p = sla !== null ? ok(r) : null; return `<tr><td class="num"><b>${n(r)}</b></td><td class="num">${num(r.summary?.completed)}</td>${keys.map((k) => `<td class="num">${num(r.summary?.[k])}</td>`).join("")}${eff ? `<td class="num">${eff(r)}</td>` : ""}
+        <td class="${r.validity.level === "invalid" ? "fail" : ""}">${esc(r.validity.level)}</td>${sla !== null ? `<td class="${p === null ? "" : p ? "pass" : "fail"}">${p === null ? "-" : p ? "PASS" : "FAIL"}</td>` : ""}<td class="noprint"><a href="/report?runs=${esc(r.id)}">report</a></td></tr>`; }).join("")}</table>
+    ${eff ? `<p class="muted">"Per desktop vs first step" shows how much each desktop still gets compared with the lightest step. A falling figure means desktops are starting to share a limit.</p>` : ""}
+    <h2>What limited each step</h2><table>${rs.map((r) => `<tr><th class="num">${n(r)}</th><td>${esc(r.verdict || "-")}${[...r.validity.problems, ...r.validity.notes].map((p) => `<div class="err">${esc(p)}</div>`).join("")}</td></tr>`).join("")}</table>
+    <div class="two"><div><h2>Test setup</h2>${kv(setupRows(base).filter((r) => r[0] !== "Desktops" && r[0] !== "Started"))}</div><div><h2>Environment</h2>${kv(envRows(base))}</div></div>`;
+}
+
 (async () => {
-  const ids = new URLSearchParams(location.search).get("runs") || "";
+  const qs = new URLSearchParams(location.search), ids = qs.get("runs") || "", series = qs.get("series") || "";
   try {
-    const res = await fetch(`/api/report?runs=${encodeURIComponent(ids)}`);
+    const res = await fetch(series ? `/api/report?series=${encodeURIComponent(series)}` : `/api/report?runs=${encodeURIComponent(ids)}`);
     const j = await res.json();
     if (!res.ok) throw new Error(j.detail || res.statusText);
     if (!j.runs.length) throw new Error("No run selected.");
-    $("#report").innerHTML = (j.runs.length === 1 ? single(j.runs[0]) : compare(j.runs)) +
+    $("#report").innerHTML = (series ? density(j.runs) : j.runs.length === 1 ? single(j.runs[0]) : compare(j.runs)) +
       `<footer>Generated by vdi-tool ${esc(j.tool_version)} on ${esc(new Date(j.generated * 1000).toLocaleString())}. Throughput charts use Proxmox's own disk counters; per-desktop results come from the workload inside each desktop.</footer>`;
     $("#sla")?.addEventListener("submit", (e) => {
       e.preventDefault();
