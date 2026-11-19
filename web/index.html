@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VDI Tool</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">▣</span> VDI Tool</div>
+    <nav>
+      <a href="#overview" data-view="overview" class="active">Overview</a>
+      <a href="#storage" data-view="storage">Storage</a>
+      <a href="#network" data-view="network">Network</a>
+      <a href="#guests" data-view="guests">VMs &amp; containers</a>
+      <div class="nav-section">Coming next</div>
+      <a class="disabled" title="Step 2">Deploy desktops</a>
+      <a class="disabled" title="Step 3">Benchmarks</a>
+      <a class="disabled" title="Step 4">Reports</a>
+    </nav>
+    <div class="sidebar-foot" id="foot">…</div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <h1 id="title">Overview</h1>
+      <div class="topbar-right">
+        <span id="conn" class="pill">connecting…</span>
+        <button id="refresh" class="btn">Refresh</button>
+      </div>
+    </header>
+    <div id="error" class="banner hidden"></div>
+
+    <section id="view-overview" class="view">
+      <div class="cards" id="summary"></div>
+      <h2>Nodes</h2>
+      <div class="grid" id="nodes"></div>
+    </section>
+
+    <section id="view-storage" class="view hidden">
+      <p class="hint">Linked clones (fast, space-saving deploys) need LVM-thin, ZFS, Ceph RBD or a qcow2 file storage such as NFS.</p>
+      <table class="table" id="storage-table"></table>
+    </section>
+
+    <section id="view-network" class="view hidden">
+      <table class="table" id="network-table"></table>
+    </section>
+
+    <section id="view-guests" class="view hidden">
+      <table class="table" id="guests-table"></table>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

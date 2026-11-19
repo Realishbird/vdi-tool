@@ -1,0 +1,13 @@
+[Unit]
+Description=vdi-tool web GUI and API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/vdi-tool/vdi-tool.env
+WorkingDirectory=/opt/vdi-tool
+ExecStart=/opt/vdi-tool/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
