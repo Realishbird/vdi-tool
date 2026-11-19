@@ -24,11 +24,14 @@ WORKDIR = os.environ.get("VDI_WORKDIR", "/var/tmp/vdi-workload")
 
 
 def post(url, payload):
-    try:
-        req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10).read()
-    except Exception:
-        pass  # the run controller treats a missing report as a failure
+    # Many desktops report at the same moment, so a single lost request must not lose the report.
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
+            return
+        except Exception:
+            time.sleep(1 + attempt * 2)  # the run controller treats a missing report as a failure
 
 
 def pctl(values, p):

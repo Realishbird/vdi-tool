@@ -223,7 +223,21 @@ async def _workload(pve: PVE, r: dict) -> None:
     if r["kind"] == "fio":
         # Every desktop writes its test file first and they all share the storage, so the
         # allowance grows with the total amount written (assumes at least 200 MB/s overall).
-        await wait(180 + r.get("size_gb", 1) * max(20, len(vms) * 5), ("starting", "preparing"))
+        prep = asyncio.create_task(wait(180 + r.get("size_gb", 1) * max(20, len(vms) * 5), ("starting", "preparing")))
+        # Do not let a few stragglers hold everyone: once 90% are ready and nothing has
+        # changed for two minutes, start without them.
+        seen, since = -1, time.time()
+        while not prep.done():
+            ready = sum(vm["status"] == "prepared" for vm in vms)
+            if ready != seen:
+                seen, since = ready, time.time()
+            if ready >= 0.9 * len(vms) and time.time() - since > 120:
+                prep.cancel()
+                for vm in vms:
+                    if vm["status"] in ("starting", "preparing"):
+                        vm.update(status="failed", error="test file was not ready in time, the run started without this desktop")
+                break
+            await asyncio.sleep(2)
         r["go"] = True
         r["measure_from"] = round(time.time() - r["created"])
         await wait(r["duration"] + 180, ("prepared", "running"))
