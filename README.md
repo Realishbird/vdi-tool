@@ -50,6 +50,18 @@ The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/bui
 3. When all desktops are ready the tool says go, so they all load the storage together.
 4. Desktops report their results. The tool also samples Proxmox's own counters and flags a run when the two disagree.
 
+## Measured so far
+
+One PCIe 5.0 NVMe drive as LVM-thin, 100 Linux desktops as full clones, test files written with real data:
+
+| Test | Result |
+|---|---|
+| Sequential read, 1M | 14.2 GB/s (114 Gbit/s) |
+| Sequential write, 1M | 6.0 GB/s |
+| 4k random, 70% read | 522,000 IOPS at 3.4 ms, host CPU 88% |
+| Knowledge worker, 25 IOPS per desktop | p95 1.7 ms at 100 desktops, host CPU 3% |
+| Boot storm, 100 desktops | all up in 32 to 46 s |
+
 ## Grafana dashboards
 
 | Dashboard | What it shows |
