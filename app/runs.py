@@ -132,6 +132,7 @@ def report(rid: str, vmid: str, body: dict[str, Any]) -> None:
         bucket[1] += int(body.get("n", 0))
     elif kind == "result":
         vm.update(status="done", result=body.get("result", {}))
+        vm.pop("error", None)
     elif kind == "error":
         vm.update(status="failed", error=str(body.get("error", ""))[:300])
 
@@ -205,7 +206,10 @@ async def _workload(pve: PVE, r: dict) -> None:
             vm.update(status="failed", error=f"could not start the workload: {e}")
 
     await asyncio.gather(*(launch(i, vm) for i, vm in enumerate(vms)))
-    deadline = time.time() + r["duration"] + 120 + (r.get("size_gb", 1) * 20 if r["kind"] == "fio" else 0)
+    # Every desktop lays out its test file first and they all share the storage, so the
+    # allowance grows with the total amount written (assumes at least 200 MB/s overall).
+    layout = r.get("size_gb", 1) * max(20, len(vms) * 5) if r["kind"] in ("fio", "fill") else 0
+    deadline = time.time() + r["duration"] + 180 + layout
     while time.time() < deadline and any(vm["status"] in ("starting", "running") for vm in vms):
         await asyncio.sleep(2)
     for vm in vms:
