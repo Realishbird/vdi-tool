@@ -1,0 +1,669 @@
+{
+ "uid": "vdi-runs",
+ "title": "VDI benchmark runs",
+ "tags": [
+  "vdi-tool"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "workload",
+    "label": "Workload",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "vdi-prom"
+    },
+    "query": {
+     "query": "label_values(vdi_run_valid, workload)",
+     "refId": "v"
+    },
+    "refresh": 2,
+    "sort": 1,
+    "multi": true,
+    "includeAll": true,
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    }
+   },
+   {
+    "name": "storage",
+    "label": "Storage",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "vdi-prom"
+    },
+    "query": {
+     "query": "label_values(vdi_run_valid, storage)",
+     "refId": "v"
+    },
+    "refresh": 2,
+    "sort": 1,
+    "multi": true,
+    "includeAll": true,
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    }
+   },
+   {
+    "name": "clone",
+    "label": "Clones",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "vdi-prom"
+    },
+    "query": {
+     "query": "label_values(vdi_run_valid, clone)",
+     "refId": "v"
+    },
+    "refresh": 2,
+    "sort": 1,
+    "multi": true,
+    "includeAll": true,
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    }
+   }
+  ]
+ },
+ "annotations": {
+  "list": []
+ },
+ "editable": false,
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Runs in view",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "count(vdi_run_valid{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\"})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Valid runs",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "count(vdi_run_valid{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\"} == 1) or vector(0)",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Best total IOPS",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Best throughput",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "MBs"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "type": "bargauge",
+   "title": "Total IOPS by run (top 15)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "blue"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"})",
+     "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "type": "bargauge",
+   "title": "Throughput by run (top 15)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 4,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "MBs",
+     "min": 0,
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "blue"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"})",
+     "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "type": "bargauge",
+   "title": "p95 latency by run (highest 15)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 13,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms",
+     "min": 0,
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "blue"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"p95_ms\"})",
+     "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "type": "bargauge",
+   "title": "Peak host CPU by run (highest 15)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 13,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "blue"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "basic",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"peak_host_cpu\"})",
+     "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Desktops by state in the running benchmark",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 24,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum by (state) (vdi_run_desktops{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\"} * on(run) group_left() (vdi_run_active == 1))",
+     "legendFormat": "{{state}}"
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Host CPU during the selected time",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 30,
+    "w": 12,
+    "h": 10
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     },
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "pve_cpu_usage_ratio{id=~\"node/.*\"} * 100",
+     "legendFormat": "{{id}}"
+    }
+   ]
+  },
+  {
+   "id": 12,
+   "type": "timeseries",
+   "title": "All desktops: disk throughput",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 30,
+    "w": 12,
+    "h": 10
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum(rate(pve_disk_read_bytes{id=~\"qemu/.*\"}[1m]))",
+     "legendFormat": "Read"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum(rate(pve_disk_write_bytes{id=~\"qemu/.*\"}[1m]))",
+     "legendFormat": "Write"
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "type": "table",
+   "title": "All finished runs",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 40,
+    "w": 24,
+    "h": 11
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=~\"total_iops|total_mbps|p95_ms|mean_ms|peak_host_cpu|completed\"}",
+     "format": "table",
+     "instant": true
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "vdi_run_valid{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\"}",
+     "format": "table",
+     "instant": true
+    }
+   ],
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "__name__": true,
+       "instance": true,
+       "job": true,
+       "kind": true
+      },
+      "renameByName": {
+       "run": "Run",
+       "workload": "Workload",
+       "storage": "Storage",
+       "clone": "Clones",
+       "batch": "Batch",
+       "series": "Series",
+       "measure": "Measure",
+       "Value": "Value"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

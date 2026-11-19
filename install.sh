@@ -44,10 +44,18 @@ find_ct() {
   done
 }
 
+# Lets the tool ask the host to download base images directly (faster than relaying them).
+grant_net() {
+  pveum user list --output-format json | grep -q "\"$TOKEN_USER\"" || return 0
+  pveum role list --output-format json | grep -q '"VDIToolNet"' || pveum role add VDIToolNet --privs Sys.AccessNetwork
+  pveum acl modify / --users "$TOKEN_USER" --roles VDIToolNet
+}
+
 CTID="$(find_ct || true)"
 
 if [[ -n "$CTID" ]]; then
   info "Existing vdi-tool container found (CT $CTID), updating to branch $BRANCH"
+  grant_net
   pct status "$CTID" | grep -q running || pct start "$CTID"
   sleep 2
   pct exec "$CTID" -- bash -c "cd /opt/vdi-tool && git fetch --depth 1 origin '$BRANCH' && git checkout -B '$BRANCH' FETCH_HEAD && bash scripts/ct-setup.sh"
@@ -83,6 +91,7 @@ ok "Container created"
 info "Creating Proxmox API token ${TOKEN_USER}!${TOKEN_NAME}"
 pveum user list --output-format json | grep -q "\"$TOKEN_USER\"" || pveum user add "$TOKEN_USER" --comment "vdi-tool service account"
 pveum acl modify / --users "$TOKEN_USER" --roles PVEAdmin
+grant_net
 if pveum user token list "$TOKEN_USER" --output-format json | grep -q "\"$TOKEN_NAME\""; then
   pveum user token remove "$TOKEN_USER" "$TOKEN_NAME"
 fi

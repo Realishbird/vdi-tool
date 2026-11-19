@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vdi-tool guide</title>
+<style>
+  :root { --ink: #17202b; --muted: #5b6876; --line: #d9dfe6; --soft: #f4f6f9; --accent: #1f5fbf; --box: #eaf1fb; --warn: #9a6400; }
+  @page { size: A4; margin: 16mm 15mm 18mm; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 10.5pt; line-height: 1.5; color: var(--ink); margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 6pt; break-before: page; padding-bottom: 6pt; border-bottom: 2pt solid var(--ink); }
+  h1.first { break-before: auto; }
+  h2 { font-size: 13pt; margin: 16pt 0 5pt; break-after: avoid; }
+  h3 { font-size: 10.5pt; margin: 12pt 0 3pt; break-after: avoid; }
+  p { margin: 0 0 7pt; } ul, ol { margin: 0 0 7pt; padding-left: 16pt; } li { margin-bottom: 2pt; }
+  .lead { font-size: 12pt; color: var(--muted); }
+  .cover { height: 250mm; display: flex; flex-direction: column; justify-content: center; }
+  .cover h1 { font-size: 34pt; border: 0; break-before: auto; margin-bottom: 4pt; }
+  .cover .v { margin-top: 26pt; color: var(--muted); }
+  .cover .bar { width: 46pt; height: 5pt; background: var(--accent); margin-bottom: 18pt; }
+  figure { margin: 9pt 0 11pt; break-inside: avoid; }
+  figure img { width: 100%; border: 1px solid var(--line); border-radius: 5pt; display: block; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 9pt; color: var(--muted); margin-top: 4pt; }
+  table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 9.5pt; break-inside: avoid; }
+  th, td { text-align: left; padding: 4.5pt 7pt; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--soft); font-size: 8.5pt; color: var(--muted); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 9pt; }
+  pre { background: var(--soft); border: 1px solid var(--line); border-radius: 5pt; padding: 7pt 9pt; white-space: pre-wrap; word-break: break-all; margin: 5pt 0 9pt; }
+  .note { border-left: 3pt solid var(--accent); background: var(--box); padding: 7pt 10pt; margin: 8pt 0 10pt; break-inside: avoid; }
+  .note.warn { border-color: var(--warn); background: #fdf8ea; }
+  .toc { list-style: none; padding: 0; } .toc li { padding: 4pt 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+  .steps { counter-reset: s; list-style: none; padding: 0; }
+  .steps li { counter-increment: s; position: relative; padding-left: 22pt; margin-bottom: 5pt; }
+  .steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 15pt; height: 15pt; border-radius: 50%; background: var(--accent); color: #fff; font-size: 8.5pt; font-weight: 700; text-align: center; line-height: 15pt; }
+  svg text { font-family: Inter, system-ui, sans-serif; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="bar"></div>
+  <h1>vdi-tool</h1>
+  <p class="lead">How it works: deploying desktops in bulk on Proxmox VE and measuring what the storage, network and host can really carry.</p>
+  <p class="v">Guide, version 1 · 19 November 2026 · covers tool revision fcdcf1f<br>Source: github.com/Realishbird/vdi-tool</p>
+</div>
+
+<h1>Contents</h1>
+<ul class="toc">
+  <li><span>1. What the tool is for</span></li>
+  <li><span>2. How it is put together</span></li>
+  <li><span>3. Install and update</span></li>
+  <li><span>4. The inventory screens</span></li>
+  <li><span>5. Golden templates</span></li>
+  <li><span>6. Deploying a batch of desktops</span></li>
+  <li><span>7. Workloads and how a benchmark run works</span></li>
+  <li><span>8. Metrics: what is collected and where</span></li>
+  <li><span>9. Reports</span></li>
+  <li><span>10. Results so far on the test host</span></li>
+  <li><span>11. Known limits and what comes next</span></li>
+  <li><span>12. Quick reference</span></li>
+</ul>
+<div class="note">Screenshots in this guide come from a demo copy of the tool loaded with numbers modelled on the first test night, so the screens show the real interface but not every figure is a measured result. Section 10 lists the measured results.</div>
+
+<h1>1. What the tool is for</h1>
+<p class="lead">vdi-tool answers one question: how much real work can this storage, network and host carry, and where does it give out first?</p>
+<p>It does that by creating many virtual desktops on Proxmox VE, making all of them do work at the same moment, and recording what happens. Because the load comes from real virtual machines doing real I/O through the full Proxmox storage stack, the result reflects what users would feel, not what a single synthetic test on the host would claim.</p>
+<h2>What it does</h2>
+<ul>
+  <li><b>Builds golden templates</b> for Linux (Ubuntu 24.04 with a desktop) and Windows 11, hands-free.</li>
+  <li><b>Deploys batches</b> of desktops from a template: 100 linked clones in about a minute.</li>
+  <li><b>Runs workloads</b> inside every desktop at once: office work, disk patterns, CPU load, capacity fill and boot storms.</li>
+  <li><b>Collects metrics</b> per desktop, per host and per run, and feeds Prometheus and Grafana for live views.</li>
+  <li><b>Produces reports</b> that say whether a result can be trusted, what limited it, and how two runs compare.</li>
+</ul>
+<h2>What it is aimed at</h2>
+<p>The first use is VDI sizing on local storage. The larger goal is testing an external storage array over 100 Gb links (up to 400 Gb/s of network in total) across NFS, iSCSI, NVMe over TCP or RDMA, and Fibre Channel. The tool does not care about the protocol: anything Proxmox can attach as a storage becomes a target, and the same workload can be run against each one and compared like for like. The workload library is general (database, sequential throughput, custom patterns), so it is useful beyond VDI.</p>
+
+<h1>2. How it is put together</h1>
+<p>The tool lives in one small Linux container (LXC) on the Proxmox host. Nothing is installed on the host itself apart from that container and an API token.</p>
+<figure>
+<svg viewBox="0 0 760 400" role="img" aria-label="Architecture diagram">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5b6876"/></marker></defs>
+  <rect x="10" y="40" width="740" height="350" rx="10" fill="#f4f6f9" stroke="#d9dfe6"/>
+  <text x="26" y="64" font-size="13" font-weight="700" fill="#17202b">Proxmox VE host or cluster</text>
+  <rect x="30" y="84" width="270" height="286" rx="8" fill="#fff" stroke="#1f5fbf" stroke-width="1.5"/>
+  <text x="46" y="108" font-size="12.5" font-weight="700" fill="#1f5fbf">vdi-tool container (LXC)</text>
+  <g font-size="11.5" fill="#17202b">
+    <rect x="46" y="120" width="238" height="62" rx="6" fill="#eaf1fb"/><text x="58" y="140" font-weight="700">Web GUI and API · port 8080</text><text x="58" y="157" fill="#5b6876">deploys, starts runs, keeps results,</text><text x="58" y="172" fill="#5b6876">serves first-boot config and the workload</text>
+    <rect x="46" y="192" width="238" height="46" rx="6" fill="#f4f6f9"/><text x="58" y="212" font-weight="700">Prometheus · port 9090</text><text x="58" y="228" fill="#5b6876">stores host and VM metrics over time</text>
+    <rect x="46" y="248" width="238" height="46" rx="6" fill="#f4f6f9"/><text x="58" y="268" font-weight="700">Grafana · port 3000</text><text x="58" y="284" fill="#5b6876">live dashboards</text>
+    <rect x="46" y="304" width="238" height="46" rx="6" fill="#f4f6f9"/><text x="58" y="324" font-weight="700">Saved state</text><text x="58" y="340" fill="#5b6876">templates, batches, every run as JSON</text>
+  </g>
+  <rect x="360" y="84" width="150" height="120" rx="8" fill="#fff" stroke="#d9dfe6"/>
+  <text x="372" y="108" font-size="12.5" font-weight="700" fill="#17202b">Proxmox API</text>
+  <text x="372" y="128" font-size="11" fill="#5b6876">clone, start, stop,</text><text x="372" y="143" font-size="11" fill="#5b6876">guest agent, counters</text>
+  <text x="372" y="168" font-size="11" fill="#5b6876">reached with an</text><text x="372" y="183" font-size="11" fill="#5b6876">API token</text>
+  <rect x="560" y="84" width="170" height="210" rx="8" fill="#fff" stroke="#d9dfe6"/>
+  <text x="572" y="108" font-size="12.5" font-weight="700" fill="#17202b">Desktops (VMs)</text>
+  <g fill="#eaf1fb" stroke="#1f5fbf"><rect x="574" y="120" width="42" height="30" rx="4"/><rect x="624" y="120" width="42" height="30" rx="4"/><rect x="674" y="120" width="42" height="30" rx="4"/><rect x="574" y="158" width="42" height="30" rx="4"/><rect x="624" y="158" width="42" height="30" rx="4"/><rect x="674" y="158" width="42" height="30" rx="4"/></g>
+  <text x="572" y="212" font-size="11" fill="#5b6876">each has the QEMU guest</text><text x="572" y="227" font-size="11" fill="#5b6876">agent and runs the</text><text x="572" y="242" font-size="11" fill="#5b6876">workload script on request</text>
+  <rect x="360" y="318" width="370" height="52" rx="8" fill="#fff" stroke="#d9dfe6"/>
+  <text x="372" y="340" font-size="12.5" font-weight="700" fill="#17202b">Storage under test</text>
+  <text x="372" y="357" font-size="11" fill="#5b6876">local LVM-thin or ZFS today · NFS, iSCSI, NVMe-oF, FC arrays next</text>
+  <g stroke="#5b6876" stroke-width="1.4" fill="none" marker-end="url(#a)">
+    <path d="M300 140 H358"/><path d="M510 130 H558"/><path d="M558 262 C470 262 380 262 302 170"/><path d="M645 294 V316"/>
+  </g>
+  <text x="304" y="132" font-size="10" fill="#5b6876">1 orders</text><text x="514" y="122" font-size="10" fill="#5b6876">2 acts</text>
+  <text x="392" y="254" font-size="10" fill="#5b6876">3 desktops fetch config, report results</text><text x="652" y="310" font-size="10" fill="#5b6876">4 disk I/O</text>
+  <text x="10" y="24" font-size="11" fill="#5b6876">You use a browser on port 8080. Everything else happens between these parts.</text>
+</svg>
+<figcaption>The tool gives orders through the Proxmox API (1, 2). Desktops talk back to the tool directly over the network (3). The load itself goes from the desktops through Proxmox to the storage (4).</figcaption>
+</figure>
+<h2>Why it is built this way</h2>
+<ul>
+  <li><b>It only needs the Proxmox API.</b> No agents on the host, so it works the same on one node or a cluster.</li>
+  <li><b>The tool is its own first-boot server.</b> Every new desktop is told, through a field in its virtual hardware, to fetch its configuration from the tool. That removes the need for a config drive per VM and is what makes large batches fast.</li>
+  <li><b>Workloads are pushed, not pre-installed.</b> A desktop downloads the current workload script at the start of each run. Updating the tool updates every desktop's workload without rebuilding templates.</li>
+  <li><b>Results are checked against a second source.</b> Desktops report their own numbers, and the tool compares them with Proxmox's own disk counters (section 9).</li>
+</ul>
+
+<h1>3. Install and update</h1>
+<p>Run one command on a Proxmox host as root. Running it again updates an existing install.</p>
+<pre>bash -c "$(curl -fsSL https://raw.githubusercontent.com/Realishbird/vdi-tool/main/install.sh)"</pre>
+<h2>What the installer does</h2>
+<ol class="steps">
+  <li>Creates a Debian 12 container named <code>vdi-tool</code> (2 cores, 2 GB RAM, 8 GB disk by default).</li>
+  <li>Creates the API user <code>vdi@pve</code> with a token and gives it to the container. The token is stored only inside the container.</li>
+  <li>Installs the application, Prometheus, the Proxmox metrics exporter and Grafana inside the container.</li>
+  <li>Starts the GUI on port 8080 and prints its address.</li>
+</ol>
+<p>Options are environment variables placed before the command, for example a fixed address: <code>VDI_IP=10.0.0.50/24 VDI_GW=10.0.0.1</code>, or a development branch: <code>VDI_BRANCH=step2-deploy</code>. The full list is at the top of <code>install.sh</code>.</p>
+<h2>Updating</h2>
+<p>Click <b>Update to latest</b> at the bottom left of the GUI, or run the one-liner again. The update pulls the newest revision from GitHub and restarts the service, which takes a few seconds.</p>
+<div class="note warn"><b>Do not update during a template build or a benchmark run.</b> The restart interrupts it. The run is marked failed and has to be started again.</div>
+
+<h1>4. The inventory screens</h1>
+<p>The first four screens are read-only views of what Proxmox has. They are there so you can check the starting point before deploying anything.</p>
+<figure><img src="img/overview.png" alt="Overview screen"><figcaption>Overview: cluster size, CPU threads, memory, free VM disk space and guest counts, with a load bar per node.</figcaption></figure>
+<div class="two">
+<figure><img src="img/storage.png" alt="Storage screen"><figcaption>Storage: every Proxmox storage with its type and how full it is.</figcaption></figure>
+<figure><img src="img/guests.png" alt="VMs and containers screen"><figcaption>VMs and containers: every guest with live CPU and memory.</figcaption></figure>
+</div>
+<p>The Network screen lists bridges and physical ports per node. The link <b>Live metrics (Grafana)</b> opens the dashboards described in section 8.</p>
+
+<h1>5. Golden templates</h1>
+<p>A golden template is a finished desktop image that batches are cloned from. The tool builds them for you, or you can use any template that already exists in Proxmox.</p>
+<figure><img src="img/deploy.png" alt="Deploy desktops screen"><figcaption>Deploy desktops: templates on top, the batch form below.</figcaption></figure>
+<h2>Linux template</h2>
+<ol class="steps">
+  <li>The tool downloads the Ubuntu 24.04 cloud image to the host (or relays it if the host cannot download directly).</li>
+  <li>It creates a VM from that image and points it at the tool for its first-boot configuration.</li>
+  <li>On first boot the VM installs a desktop (XFCE), remote desktop (xrdp), the QEMU guest agent and fio, and creates the user <code>vdi</code> with the password you chose.</li>
+  <li>The VM tells the tool it is finished and shuts down. The tool converts it to a template.</li>
+</ol>
+<h2>Windows 11 template</h2>
+<p>Upload the Windows 11 ISO and the VirtIO driver ISO to a Proxmox ISO storage first. Then:</p>
+<ol class="steps">
+  <li>The tool builds a small answer-file ISO containing <code>autounattend.xml</code> and a setup script.</li>
+  <li>It creates a VM with UEFI, Secure Boot and a virtual TPM, attaches all three ISOs and starts it. It presses a key for you at the "Press any key to boot from CD" prompt.</li>
+  <li>Windows installs with no questions asked, loads the VirtIO drivers, creates the <code>vdi</code> user, enables Remote Desktop and installs the guest agent.</li>
+  <li>The setup script reports back to the tool and shuts down. The tool converts the VM to a template.</li>
+</ol>
+<p>On the test host this took about 30 minutes with no clicks.</p>
+<div class="note warn"><b>Version 1 limit:</b> Windows clones are not individualised. They all share the template's computer name and machine ID. That is fine for load tests and wrong for anything that joins a domain. See section 11.</div>
+<h2>Passwords</h2>
+<p>The password you type for a template is stored only as a one-way hash, and only until the build finishes. A batch can be given its own password, and <b>Set password</b> on a batch changes it on every running desktop through the guest agent.</p>
+
+<h1>6. Deploying a batch of desktops</h1>
+<p>A batch is a numbered group of desktops cloned from one template. Fill in the form, press <b>Deploy batch</b>, and watch the progress bar.</p>
+<h2>Linked clones or full clones</h2>
+<table>
+  <tr><th></th><th>Linked clones (default)</th><th>Full clones (tick box)</th></tr>
+  <tr><td><b>What it is</b></td><td>Each desktop shares the template's disk and stores only its own changes.</td><td>Each desktop gets a complete private copy of the disk.</td></tr>
+  <tr><td><b>Deploy time, 100 desktops</b></td><td>about 1 minute</td><td>about 15 minutes</td></tr>
+  <tr><td><b>Space used at the start</b></td><td>almost none</td><td>about 3.7 GiB each</td></tr>
+  <tr><td><b>Use it for</b></td><td>Quick tests, VDI as it is usually run, boot storms on shared images.</td><td>Storage tests where every desktop must hit its own blocks, and capacity tests.</td></tr>
+</table>
+<p>Linked clones need a storage that supports them (LVM-thin, ZFS, or qcow2 files). If the batch goes to a different storage than the template, the tool makes full clones automatically.</p>
+<h2>Options that matter</h2>
+<table>
+  <tr><th>Option</th><th>What it does</th></tr>
+  <tr><td>How many, Name prefix</td><td>Number of desktops and the start of their names. IDs are reserved up front so two batches never collide.</td></tr>
+  <tr><td>Storage</td><td>Where the desktops' disks go. This is how you aim a test at a specific array or protocol.</td></tr>
+  <tr><td>Disk GB</td><td>Grows each desktop's disk beyond the template's size. The filesystem grows on first boot.</td></tr>
+  <tr><td>Cores, Memory</td><td>Override the template's size per desktop.</td></tr>
+  <tr><td>Fill disks with data</td><td>After deploy, every desktop writes real, unique data to use up space on purpose. For testing an array near full. The tool refuses fills that would take a storage past 90%.</td></tr>
+  <tr><td>Parallel clones</td><td>How many clone jobs run at once.</td></tr>
+</table>
+<h2>What happens when you press Deploy</h2>
+<ol class="steps">
+  <li>The tool reserves a block of VM IDs and checks the storage has room.</li>
+  <li>It clones the template several at a time. Each clone is tagged with its batch ID.</li>
+  <li>It sets each desktop's name, size and the address of its first-boot configuration.</li>
+  <li>It starts the desktops. Each one fetches its configuration from the tool, sets its hostname and comes up with the guest agent running.</li>
+</ol>
+<p>Proxmox sometimes refuses a task when many are launched in the same instant. The tool paces its requests and retries those refusals, and a half-made VM is cleaned up before the retry. Deleting a batch removes only VMs that carry that batch's tag, so it cannot delete anything else.</p>
+
+<h1>7. Workloads and how a benchmark run works</h1>
+<p>A run takes one batch and one workload, starts the workload in every desktop, and records the result.</p>
+<figure><img src="img/bench.png" alt="Benchmarks screen"><figcaption>Benchmarks: the run form, the workload library, and one card per run.</figcaption></figure>
+<h2>The workload library</h2>
+<table>
+  <tr><th>Workload</th><th>What each desktop does</th><th>What it tells you</th></tr>
+  <tr><td>Office worker</td><td>Writes and reads documents, compresses, computes, downloads files, with think time between actions.</td><td>Response time users would feel at this density. Synthetic, not real applications.</td></tr>
+  <tr><td>VDI knowledge worker disk</td><td>25 IOPS per desktop, mixed block sizes, 70% write.</td><td>Latency at a realistic steady VDI load.</td></tr>
+  <tr><td>Disk stress</td><td>4k random, 70% read, queue depth 16, flat out.</td><td>The IOPS ceiling. Not a real-world pattern.</td></tr>
+  <tr><td>Database</td><td>8k random, 60% read, 4 jobs at queue depth 32.</td><td>Behaviour under an OLTP-like load.</td></tr>
+  <tr><td>Sequential read, Sequential write</td><td>1M blocks, 4 jobs at queue depth 32.</td><td>The throughput ceiling in GB/s and Gbit/s.</td></tr>
+  <tr><td>Max throughput</td><td>1M mixed read and write, 8 jobs at queue depth 64.</td><td>The hardest push on bandwidth.</td></tr>
+  <tr><td>CPU stress</td><td>Hashes data on every core.</td><td>Host CPU headroom and scheduling.</td></tr>
+  <tr><td>Fill disk</td><td>Writes unique data and keeps it.</td><td>Behaviour as the storage fills up.</td></tr>
+  <tr><td>Boot storm</td><td>Every desktop is stopped, then all are started at once.</td><td>Time until every desktop is usable again.</td></tr>
+</table>
+<p>You can add your own disk workloads under <b>Workload library: add your own</b>: pattern, block size, read share, queue depth, parallel jobs and an optional IOPS cap. They then appear in the Workload list.</p>
+<h2>What happens during a disk run</h2>
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="Run sequence">
+  <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5b6876"/></marker></defs>
+  <g font-size="12" font-weight="700" fill="#17202b"><text x="60" y="20">Tool</text><text x="330" y="20">Proxmox</text><text x="590" y="20">Each desktop</text></g>
+  <g stroke="#d9dfe6" stroke-width="2"><line x1="75" y1="30" x2="75" y2="290"/><line x1="355" y1="30" x2="355" y2="290"/><line x1="630" y1="30" x2="630" y2="290"/></g>
+  <g stroke="#5b6876" stroke-width="1.4" marker-end="url(#b)" fill="none">
+    <line x1="75" y1="55" x2="353" y2="55"/><line x1="355" y1="70" x2="628" y2="70"/>
+    <line x1="630" y1="105" x2="77" y2="105"/><line x1="630" y1="160" x2="77" y2="160"/>
+    <line x1="75" y1="190" x2="628" y2="190"/><line x1="630" y1="255" x2="77" y2="255"/>
+  </g>
+  <g font-size="10.5" fill="#17202b">
+    <text x="85" y="49">1 run this command in the desktop (guest agent)</text>
+    <text x="365" y="64">starts it inside the VM</text>
+    <text x="260" y="99">2 downloads the workload script from the tool</text>
+    <text x="215" y="154">3 "prepared": test file written with real random data</text>
+    <text x="150" y="184">4 "go": sent only when all desktops are prepared</text>
+    <text x="300" y="249">6 result: IOPS, MB/s, latency percentiles</text>
+  </g>
+  <rect x="560" y="112" width="140" height="34" rx="5" fill="#f4f6f9" stroke="#d9dfe6"/><text x="570" y="133" font-size="10.5" fill="#5b6876">writing the test file</text>
+  <rect x="560" y="198" width="140" height="42" rx="5" fill="#eaf1fb" stroke="#1f5fbf"/><text x="570" y="216" font-size="10.5" font-weight="700" fill="#1f5fbf">5 timed run</text><text x="570" y="231" font-size="10" fill="#5b6876">all desktops together</text>
+  <rect x="20" y="198" width="110" height="42" rx="5" fill="#f4f6f9" stroke="#d9dfe6"/><text x="28" y="216" font-size="10" fill="#5b6876">samples Proxmox</text><text x="28" y="230" font-size="10" fill="#5b6876">every 10 seconds</text>
+  <text x="20" y="282" font-size="10.5" fill="#5b6876">Steps 2 to 6 go directly between desktop and tool over the network.</text>
+</svg>
+<figcaption>The preparation phase (3) is not timed. The timed phase (5) starts for every desktop at the same moment, so they all load the storage together.</figcaption>
+</figure>
+<h3>Two details that make the numbers honest</h3>
+<ul>
+  <li><b>The test file is really written.</b> A file that is only reserved contains no data, and reading it returns zeros without touching the storage. An early version of the tool made that mistake and reported 175 Gbit/s from a single drive. The file is now filled with random data first and kept for the next run.</li>
+  <li><b>Everyone starts together.</b> Desktops wait for a "go" from the tool. If a few stragglers are not ready after most are, the run starts without them and says so.</li>
+</ul>
+<p>Before each run the tool also stops anything left over from an earlier run inside the desktop, so two workloads never overlap. If a desktop never reports, the tool asks it what happened through the guest agent and puts the answer in the error.</p>
+<h3>Run settings</h3>
+<table>
+  <tr><th>Setting</th><th>Meaning</th></tr>
+  <tr><td>Duration</td><td>Length of the timed part. For Fill disk it is the time limit.</td></tr>
+  <tr><td>Ramp-up</td><td>Spreads the start of the desktops over this many seconds, to see where performance drops as load builds.</td></tr>
+  <tr><td>GB per desktop</td><td>Size of the test file for disk workloads, or the amount to write for Fill disk. Use a size larger than the storage's cache to measure the disks and not the cache.</td></tr>
+</table>
+
+<h1>8. Metrics: what is collected and where</h1>
+<table>
+  <tr><th>Source</th><th>What</th><th>Where it goes</th></tr>
+  <tr><td>Inside each desktop</td><td>The workload's own result: IOPS, MB/s, average latency and p50, p95, p99 and maximum; action times for the office workload; boot time.</td><td>Saved with the run, shown per desktop.</td></tr>
+  <tr><td>Proxmox, every 10 s during a run</td><td>Host CPU and memory, and for the batch: disk read and write MB/s, network in and out, vCPUs busy.</td><td>Saved with the run, drawn as charts.</td></tr>
+  <tr><td>Proxmox, every 15 s all the time</td><td>Per VM, per node and per storage: CPU, memory, disk and network counters, storage usage.</td><td>Prometheus, shown in Grafana.</td></tr>
+</table>
+<figure><img src="img/run-detail.png" alt="Run detail"><figcaption>Selecting a run shows its totals, charts over time and a row per desktop. Tags and notes entered here appear on the report.</figcaption></figure>
+<h2>Grafana</h2>
+<p>Grafana runs in the container on port 3000 and opens without a login in view-only mode. The provided dashboard shows host load, per-VM disk and network rates and storage usage, live and for any past time range. Prometheus keeps the history, so you can look at what the whole host was doing during any run.</p>
+<div class="note"><b>Not collected yet:</b> throughput per physical network port on the host. For the array test this matters, because it shows how traffic spreads across the 100 Gb links. It is the next metrics item.</div>
+
+<h1>9. Reports</h1>
+<p>Every run has a report page made to be printed or saved as PDF. Open it with <b>Report</b> on a run card.</p>
+<figure><img src="img/report-top.png" alt="Report"><figcaption>A run report: validity, what limited the run, key results, then setup and environment.</figcaption></figure>
+<h2>What a report contains</h2>
+<ul>
+  <li><b>Validity.</b> Green, amber or red, with the reason in plain words.</li>
+  <li><b>What limited this run.</b> One sentence: host CPU, the storage path, or a deliberate cap.</li>
+  <li><b>Key results</b> for the workload, with the headline figures first.</li>
+  <li><b>Test setup and environment,</b> captured at run time: workload settings, clone type, storage and its type, host CPU, memory, Proxmox and tool version. A report still reads correctly months later, after the batch is gone.</li>
+  <li><b>Spread across desktops,</b> charts over time, failures with their cause, and a row per desktop with outliers highlighted.</li>
+</ul>
+<figure><img src="img/report-charts.png" alt="Report charts"><figcaption>The shaded band is the timed part of the run. Throughput here comes from Proxmox's counters, not from the desktops.</figcaption></figure>
+<h2>How validity is decided</h2>
+<table>
+  <tr><th>Check</th><th>Result</th></tr>
+  <tr><td>Some desktops failed, 10% or fewer</td><td>Amber: totals cover the desktops that finished.</td></tr>
+  <tr><td>More than 10% of desktops failed, or none completed</td><td>Red: totals understate the batch.</td></tr>
+  <tr><td>Desktops report much more throughput than Proxmox saw on their disks</td><td>Red: part of the I/O never reached the storage.</td></tr>
+  <tr><td>Disk run made before real test data was written</td><td>Red: reads may have been zeros.</td></tr>
+</table>
+<figure><img src="img/report-invalid.png" alt="Invalid run"><figcaption>The early run that claimed 175 Gbit/s is caught by two checks.</figcaption></figure>
+<h2>Comparing runs</h2>
+<p>Tick <b>Compare</b> on two or more runs and press <b>Compare selected runs</b>. The oldest ticked run is the baseline (A). Each measure shows the percentage change against A, green when better and red when worse. A target such as "latency p95 at most 10 ms" adds a pass or fail row. This is the page for linked against full clones, local against array, or one protocol against another.</p>
+<figure><img src="img/compare.png" alt="Comparison report"><figcaption>Comparison of full and linked clones with a latency target.</figcaption></figure>
+<h2>Export</h2>
+<ul>
+  <li><b>Print or save as PDF</b> from any report page.</li>
+  <li><b>Desktops CSV:</b> one row per desktop for a run.</li>
+  <li><b>All runs as CSV:</b> one row per run with its setup, tags and results, for a spreadsheet.</li>
+  <li><b>Raw JSON:</b> everything the tool stored for a run, including the time series.</li>
+</ul>
+
+<h1>10. Results so far on the test host</h1>
+<p>Host: 2 x Intel Xeon 6978P (480 threads), 1.5 TiB RAM, Proxmox VE 9.2.2. Storage: DS01, an LVM-thin pool on one 7 TB NVMe drive. All tests used 100 Linux desktops unless noted. Measured on 19 November 2026.</p>
+<table>
+  <tr><th>Test</th><th>Result</th><th>Status</th></tr>
+  <tr><td>Deploy 100 linked clones</td><td>about 1 minute</td><td>measured</td></tr>
+  <tr><td>Deploy 100 full clones</td><td>15 minutes, 0 errors</td><td>measured</td></tr>
+  <tr><td>Deploy 3 Windows 11 linked clones</td><td>21 s, guest agent answering 50 s later</td><td>measured</td></tr>
+  <tr><td>Boot storm, linked clones</td><td>44 to 46 s average, all up in 56 to 65 s</td><td>measured</td></tr>
+  <tr><td>Boot storm, full clones</td><td>32 s average, all up in 38 s</td><td>measured</td></tr>
+  <tr><td>Sequential read, full clones, real data</td><td>14.2 GB/s (114 Gbit/s), host CPU 25%, 99 of 100 desktops reported</td><td>measured, valid</td></tr>
+  <tr><td>Fill test, 5 desktops with 50 GB disks</td><td>100 GB of real data at 1.25 GB/s; space returned on delete</td><td>measured</td></tr>
+  <tr><td>CPU stress</td><td>400 vCPUs busy, host at 83%</td><td>measured</td></tr>
+  <tr><td>4k random 70% read, queue depth 16, full clones, real data</td><td>522,000 IOPS, 3.4 ms average, 5.9 ms p95, host CPU 88%, 100 of 100 desktops</td><td>measured, valid</td></tr>
+  <tr><td>Max throughput (first attempt)</td><td>175 Gbit/s claimed</td><td>invalid, see section 7</td></tr>
+</table>
+<h2>What these say</h2>
+<ul>
+  <li>The harness can already push more than 100 Gbit/s of real I/O from 100 desktops with the host CPU at a quarter. The single drive was the limit, which is the right kind of limit to hit.</li>
+  <li>Small-block tests are limited by host CPU before the drive. To load a fast array with small blocks, use more desktops with fewer cores each, or accept that the host is part of the result.</li>
+  <li>Linked clones boot 30 to 40% slower than full clones on this pool, probably from copy-on-write on first writes.</li>
+</ul>
+
+<h1>11. Known limits and what comes next</h1>
+<h2>Limits in version 1</h2>
+<table>
+  <tr><th>Limit</th><th>Effect</th></tr>
+  <tr><td>The GUI has no login</td><td>Anyone who can reach port 8080 can deploy and delete desktops. Keep it on a trusted network.</td></tr>
+  <tr><td>The API token has the full PVEAdmin role</td><td>Wider than needed. To be narrowed.</td></tr>
+  <tr><td>Windows clones share one computer name and machine ID</td><td>Fine for load, not for domain join.</td></tr>
+  <tr><td>Windows desktops only run the boot storm</td><td>No disk or office workload on Windows yet.</td></tr>
+  <tr><td>The office workload is synthetic</td><td>It behaves like office work but does not run real applications.</td></tr>
+  <tr><td>No per-port network metrics on the host</td><td>Cannot yet show load per 100 Gb link.</td></tr>
+  <tr><td>The tool's address comes from DHCP</td><td>It can change. Set <code>VDI_IP</code> at install for a fixed one.</td></tr>
+  <tr><td>One run at a time</td><td>A second run is refused while one is active.</td></tr>
+</table>
+<h2>Planned</h2>
+<ul>
+  <li>Array testing: storage targets per protocol (NFS, iSCSI, NVMe over TCP and RDMA, FC), per-link throughput, and a mode that runs fio on the host directly to separate the array from the VM layer.</li>
+  <li>Density report: step the number of desktops up and report "supports N users at p95 below X ms".</li>
+  <li>Windows: unique names per clone, and disk workloads with diskspd.</li>
+  <li>A real-applications workload (office suite, browser, video) in a logged-in session.</li>
+  <li>Run results as Prometheus metrics, so Grafana can chart runs against each other.</li>
+  <li>Login for the GUI and a narrower API token.</li>
+</ul>
+
+<h1>12. Quick reference</h1>
+<div class="two">
+<div>
+<h2>Addresses</h2>
+<table>
+  <tr><th>What</th><th>Where</th></tr>
+  <tr><td>GUI</td><td>http://&lt;tool&gt;:8080</td></tr>
+  <tr><td>Report for a run</td><td>/report?runs=&lt;id&gt;</td></tr>
+  <tr><td>Comparison</td><td>/report?runs=&lt;a&gt;,&lt;b&gt;</td></tr>
+  <tr><td>All runs as CSV</td><td>/api/runs.csv</td></tr>
+  <tr><td>Grafana</td><td>http://&lt;tool&gt;:3000</td></tr>
+  <tr><td>Prometheus</td><td>http://&lt;tool&gt;:9090</td></tr>
+</table>
+</div>
+<div>
+<h2>Inside the container</h2>
+<table>
+  <tr><th>What</th><th>Where</th></tr>
+  <tr><td>Application</td><td>/opt/vdi-tool</td></tr>
+  <tr><td>Saved state and runs</td><td>/var/lib/vdi-tool</td></tr>
+  <tr><td>Service</td><td>vdi-tool.service</td></tr>
+  <tr><td>Logs</td><td>journalctl -u vdi-tool</td></tr>
+</table>
+</div>
+</div>
+<h2>In the repository</h2>
+<table>
+  <tr><th>Path</th><th>Contents</th></tr>
+  <tr><td>install.sh</td><td>Host-side installer and updater (the one-liner).</td></tr>
+  <tr><td>scripts/</td><td>Container setup, metrics stack setup, service files.</td></tr>
+  <tr><td>app/</td><td>Backend: Proxmox client, deploy, runs and reports, Windows answer files.</td></tr>
+  <tr><td>web/</td><td>GUI and the report page.</td></tr>
+  <tr><td>agent/workload.py</td><td>The script every desktop downloads and runs for a benchmark.</td></tr>
+  <tr><td>grafana/</td><td>The provided dashboard.</td></tr>
+  <tr><td>docs/</td><td>This guide and its source.</td></tr>
+</table>
+<h2>A first test, start to finish</h2>
+<ol class="steps">
+  <li>Install with the one-liner and open the GUI.</li>
+  <li>Deploy desktops: build a Linux template (about 10 minutes).</li>
+  <li>Deploy a batch of 10 on the storage you want to test. Tick Full clones for a storage test.</li>
+  <li>Benchmarks: run Sequential read with 4 GB per desktop, then VDI knowledge worker disk.</li>
+  <li>Open each Report, check that it is valid, add tags, and compare the two storages you care about.</li>
+  <li>Delete the batch when finished. The space comes back.</li>
+</ol>
+
+</body>
+</html>

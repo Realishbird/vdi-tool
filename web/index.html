@@ -15,12 +15,11 @@
       <a href="#storage" data-view="storage">Storage</a>
       <a href="#network" data-view="network">Network</a>
       <a href="#guests" data-view="guests">VMs &amp; containers</a>
-      <div class="nav-section">Coming next</div>
-      <a class="disabled" title="Step 2">Deploy desktops</a>
-      <a class="disabled" title="Step 3">Benchmarks</a>
-      <a class="disabled" title="Step 4">Reports</a>
+      <a href="#deploy" data-view="deploy">Deploy desktops</a>
+      <a href="#bench" data-view="bench">Benchmarks</a>
+      <a id="grafana" target="_blank" rel="noopener">Live metrics (Grafana) ↗</a>
     </nav>
-    <div class="sidebar-foot" id="foot">…</div>
+    <div class="sidebar-foot"><span id="foot">…</span><br><a id="update" class="link">Update to latest</a></div>
   </aside>
 
   <main>
@@ -29,8 +28,10 @@
       <div class="topbar-right">
         <span id="conn" class="pill">connecting…</span>
         <button id="refresh" class="btn">Refresh</button>
+        <button id="auth-btn" class="btn">Login</button>
       </div>
     </header>
+    <div id="auth-panel" class="card hidden"></div>
     <div id="error" class="banner hidden"></div>
 
     <section id="view-overview" class="view">
@@ -50,6 +51,105 @@
 
     <section id="view-guests" class="view hidden">
       <table class="table" id="guests-table"></table>
+    </section>
+    <section id="view-deploy" class="view hidden">
+      <h2 class="first">Golden templates</h2>
+      <table class="table" id="templates-table"></table>
+      <details class="card form-card">
+        <summary>Build a Linux template</summary>
+        <form id="tmpl-form" class="form">
+          <label>Image<select name="image" id="f-image"></select></label>
+          <label>Name<input name="name" value="vdi-linux-golden" required></label>
+          <label>Node<select name="node" class="f-node"></select></label>
+          <label>Storage<select name="storage" class="f-storage"></select></label>
+          <label>Bridge<select name="bridge" class="f-bridge"></select></label>
+          <label>Cores<input name="cores" type="number" value="4" min="1"></label>
+          <label>Memory (MB)<input name="memory" type="number" value="4096" min="1024" step="512"></label>
+          <label>Disk (GB)<input name="disk_gb" type="number" value="32" min="8"></label>
+          <label>Password for user "vdi"<input name="password" type="text" spellcheck="false" required minlength="4" autocomplete="off" data-1p-ignore data-lpignore="true"></label>
+          <div class="form-actions"><button class="btn primary">Build template</button>
+            <span class="hint">Needs DHCP and internet on the bridge. Takes roughly 10 minutes.</span></div>
+        </form>
+      </details>
+      <details class="card form-card">
+        <summary>Build a Windows 11 template</summary>
+        <form id="win-form" class="form">
+          <input type="hidden" name="os" value="windows">
+          <label>Windows ISO<select name="win_iso" id="f-winiso" required></select></label>
+          <label>VirtIO driver ISO<select name="virtio_iso" id="f-virtioiso" required></select></label>
+          <label>Name<input name="name" value="vdi-win11-golden" required maxlength="15"></label>
+          <label>Node<select name="node" class="f-node"></select></label>
+          <label>Storage<select name="storage" class="f-storage"></select></label>
+          <label>Bridge<select name="bridge" class="f-bridge"></select></label>
+          <label>Cores<input name="cores" type="number" value="4" min="2"></label>
+          <label>Memory (MB)<input name="memory" type="number" value="8192" min="4096" step="1024"></label>
+          <label>Disk (GB)<input name="disk_gb" type="number" value="64" min="52"></label>
+          <label>Password for user "vdi"<input name="password" type="text" spellcheck="false" required minlength="4" autocomplete="off" data-1p-ignore data-lpignore="true"></label>
+          <label class="check"><input type="checkbox" name="euc" id="f-euc" disabled> Include EUC Score</label>
+          <div class="form-actions"><button class="btn primary">Build template</button>
+            <span class="hint">Installs Windows 11 Pro hands-free, with VirtIO drivers, the guest agent and Remote Desktop. Takes 20 to 40 minutes. Not activated; clones share one computer name for now.</span></div>
+        </form>
+      </details>
+      <details class="card form-card">
+        <summary>EUC Score package (user experience tests on Windows)</summary>
+        <div class="hint" id="euc-state">Checking…</div>
+        <div class="form-actions"><input type="file" id="euc-file" accept=".zip,.exe"><button class="btn" id="euc-up">Upload</button><button class="btn danger hidden" id="euc-rm">Remove</button></div>
+        <p class="hint">Download Install-EUCScoreBase.zip from eucscore.com yourself and upload it here. Uploading it means you accept the EUC Score Subscription Agreement; organizations with more than 50 users or over US$1M revenue need a paid subscription. Templates built with "Include EUC Score" install it silently to C:\EUCScore and keep the vdi user logged on, because its tests need a desktop session.</p>
+      </details>
+      <p class="hint">Upload ISOs to Proxmox first. Any existing Proxmox template can be used for a batch.</p>
+
+      <h2>Batches</h2>
+      <div class="card form-card">
+        <form id="batch-form" class="form">
+          <label>Template<select name="template" id="f-template" required></select></label>
+          <label>How many<input name="count" type="number" value="10" min="1" max="2000" required></label>
+          <label>Name prefix<input name="prefix" value="vdi" required></label>
+          <label>Storage<select name="storage" id="f-bstorage"></select></label>
+          <label>Disk GB (blank = template)<input name="disk_gb" type="number" min="8"></label>
+          <label>Cores (blank = template)<input name="cores" type="number" min="1"></label>
+          <label>Memory MB (blank = template)<input name="memory" type="number" min="512" step="512"></label>
+          <label>Password for "vdi" (Linux only; blank = template's)<input name="password" placeholder="keep the template's" type="text" spellcheck="false" minlength="4" autocomplete="off" data-1p-ignore data-lpignore="true"></label>
+          <label>Parallel clones<input name="concurrency" type="number" value="4" min="1" max="32"></label>
+          <label class="check"><input name="start" type="checkbox" checked> Start after creating</label>
+          <label class="check"><input name="full" type="checkbox"> Full clones (independent disks)</label>
+          <label class="check"><input name="fill" type="checkbox" id="f-fill"> Fill disks with data (capacity test)</label>
+          <label id="f-fillgb" class="hidden">Fill GB per desktop<input name="fill_gb" type="number" min="1" placeholder="e.g. 20"></label>
+          <div class="form-actions"><button class="btn primary">Deploy batch</button><span class="hint" id="store-fill"></span></div>
+        </form>
+      </div>
+      <div id="batches"></div>
+    </section>
+    <section id="view-bench" class="view hidden">
+      <div class="card form-card" style="margin-top:0">
+        <form id="run-form" class="form">
+          <label>Batch<select name="batch" id="f-rbatch" required></select></label>
+          <label>Workload<select name="profile" id="f-profile"></select></label>
+          <label>Duration (seconds)<input name="duration" type="number" value="120" min="10" max="3600"></label>
+          <label>Ramp-up (seconds)<input name="ramp" type="number" value="0" min="0" max="3600"></label>
+          <label>GB per desktop (disk workloads, Fill disk)<input name="size_gb" type="number" value="1" min="1" max="2000"></label>
+          <label>Density steps (optional, e.g. 10,25,50,100)<input name="steps" pattern="\s*\d+(\s*,\s*\d+)+\s*" placeholder="blank = one run on all desktops"></label>
+          <div class="form-actions"><button class="btn primary">Start run</button>
+            <span class="hint">Ramp-up spreads the desktop start times, so you can see where performance drops as load builds. Boot storm ignores these numbers. Density steps repeat the run on a growing number of desktops and give a report that says how many desktops the storage supports. For Fill disk, Duration is the time limit, so raise it for large fills.</span></div>
+        </form>
+      </div>
+      <details class="card form-card">
+        <summary>Workload library: add your own</summary>
+        <form id="prof-form" class="form">
+          <label>Name<input name="name" required minlength="3" placeholder="e.g. Analytics scan 256k"></label>
+          <label>Pattern<select name="rw"><option value="randrw">Random read/write mix</option><option value="randread">Random read</option><option value="randwrite">Random write</option><option value="rw">Sequential read/write mix</option><option value="read">Sequential read</option><option value="write">Sequential write</option></select></label>
+          <label>Block size<input name="bs" value="4k" required pattern="\d{1,4}[kKmM]"></label>
+          <label>Read % (mixes only)<input name="rwmixread" type="number" value="70" min="0" max="100"></label>
+          <label>Queue depth<input name="iodepth" type="number" value="16" min="1" max="1024"></label>
+          <label>Parallel jobs per VM<input name="numjobs" type="number" value="1" min="1" max="64"></label>
+          <label>IOPS limit per VM (blank = flat out)<input name="rate_iops" type="number" min="1"></label>
+          <div class="form-actions"><button class="btn primary">Save workload</button><span class="hint">Saved workloads appear in the Workload list above. They run fio inside every VM of the batch.</span></div>
+        </form>
+        <div id="custom-profiles"></div>
+      </details>
+      <div id="run-tools" class="run-tools"></div>
+      <div id="runs"></div>
+      <div id="run-detail"></div>
+      <div id="compare"></div>
     </section>
   </main>
 </div>
