@@ -195,7 +195,7 @@ async def deploy_state():
                 s = live[vm["vmid"]].get("status", s)
             counts[s] = counts.get(s, 0) + 1
         errors = [f"{vm['name']}: {vm['error']}" for vm in b["vms"] if vm.get("error")][:5]
-        batches.append({**{k: v for k, v in b.items() if k not in ("vms", "pwhash")}, "id": bid,
+        batches.append({**{k: v for k, v in b.items() if k not in ("vms", "pwhash")}, "custom_password": bool(b.get("pwhash")), "id": bid,
                         "count": len(b["vms"]), "counts": counts, "errors": errors,
                         "first": b["vms"][0]["vmid"], "last": b["vms"][-1]["vmid"]})
     isos = []
@@ -309,6 +309,38 @@ async def create_batch(req: BatchReq, request: Request):
     state.save()
     deploy.spawn(deploy.deploy_batch(pve, bid))
     return {"id": bid}
+
+
+class PasswordReq(BaseModel):
+    password: str = Field(min_length=5, max_length=64)
+
+
+@app.post("/api/batches/{bid}/password")
+async def set_batch_password(bid: str, req: PasswordReq):
+    """Set the vdi user's password on every running desktop through the guest agent."""
+    b = state.data["batches"].get(bid)
+    if not b or b["status"] not in ("ready", "partial"):
+        raise HTTPException(400, "batch not found or not ready")
+    sem = asyncio.Semaphore(8)
+
+    async def one(vm: dict) -> str | None:
+        async with sem:
+            try:
+                await pve.request("POST", f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent/set-user-password",
+                                  username="vdi", password=req.password)
+                return None
+            except PVEError as e:
+                return f"{vm['name']}: {e}"
+
+    results = await asyncio.gather(*(one(vm) for vm in b["vms"] if vm["status"] in ("running", "created")))
+    errors = [r for r in results if r]
+    if b.get("os") != "windows":
+        # Desktops that have not booted yet pick this up from cloud-init.
+        b["pwhash"] = deploy.hash_pw(req.password)
+        for vm in b["vms"]:
+            state.data["pw"][f"c{vm['vmid']}"] = b["pwhash"]
+        state.save()
+    return {"ok": len(results) - len(errors), "failed": len(errors), "errors": errors[:5]}
 
 
 @app.delete("/api/batches/{bid}")

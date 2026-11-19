@@ -112,8 +112,9 @@ function renderDeploy() {
     const parts = Object.entries(c).map(([k, v]) => `${v} ${k}`).join(" · ");
     return `<div class="card batch"><div class="batch-head">
       <div><b>${esc(b.prefix)}-${esc(b.id)}</b> <span class="status-${esc(b.status)}">${esc(b.status)}</span>
-        <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
-      <button class="btn small danger" data-del-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Delete batch</button></div>
+        <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)} · ${b.custom_password ? "own password" : "template's password"}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
+      <div><button class="btn small" data-pw-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Set password</button>
+      <button class="btn small danger" data-del-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Delete batch</button></div></div>
       ${meter(parts, done, b.count, `${done} of ${b.count} ready${failed ? `, ${failed} failed` : ""}`, true)}
       ${b.errors.length ? `<div class="errs">${esc(b.errors.join("\n"))}</div>` : ""}</div>`;
   }).join("") || `<div class="empty">No batches yet.</div>`;
@@ -267,6 +268,10 @@ document.addEventListener("click", async (e) => {
   if (card && !t.delRun) { selRun = card.dataset.run; runDetail = null; load(); return; }
   try {
     if (t.delRun && window.confirm("Delete this run and its results?")) { await api("DELETE", `/api/runs/${t.delRun}`); load(); }
+    if (t.pwBatch) {
+      const pw = window.prompt('New password for user "vdi" on every running desktop in this batch (5 characters or more):');
+      if (pw) { const r = await api("POST", `/api/batches/${t.pwBatch}/password`, { password: pw }); if (r.failed) throw new Error(`Password set on ${r.ok} desktops, ${r.failed} failed. ${r.errors.join(" | ")}`); window.alert(`Password set on ${r.ok} desktops.`); load(); }
+    }
     if (t.delBatch && window.confirm(`Stop and permanently delete every desktop in batch ${t.delBatch}?`)) { await api("DELETE", `/api/batches/${t.delBatch}`); load(); }
     if (t.delTmpl && window.confirm(`Permanently delete template ${t.delTmpl}? Linked clones made from it must be deleted first.`)) { await api("DELETE", `/api/templates/${t.delTmpl}`); load(); }
   } catch (x) { fail(x); }
