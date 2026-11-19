@@ -540,7 +540,7 @@ async def report_data(runs_: str = Query(alias="runs")):
         r = runs.runs.get(rid)
         if not r:
             raise HTTPException(404, f"run {rid} not found")
-        out.append(runs.report(r))
+        out.append(runs.report_data(r))
     return {"tool_version": VERSION, "generated": time.time(), "runs": out}
 
 

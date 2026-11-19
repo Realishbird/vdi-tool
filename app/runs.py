@@ -428,7 +428,7 @@ def spread(r: dict) -> dict:
             "max": vals[-1]}
 
 
-def report(r: dict) -> dict:
+def report_data(r: dict) -> dict:
     """Everything a report page needs for one run."""
     b = state.data["batches"].get(r["batch"])
     setup = r.get("setup") or (setup_of(b) if b else {})
@@ -467,7 +467,7 @@ def runs_csv() -> str:
     import io
     rows = []
     for r in sorted(runs.values(), key=lambda r: r["created"]):
-        setup = report(r)["setup"]
+        setup = report_data(r)["setup"]
         rows.append({"run": r["id"], "started_utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["created"])),
                      "workload": r["profile_name"], "kind": r["kind"], "status": r["status"], "validity": validity(r)["level"],
                      "storage": r["storage"], "storage_type": (r.get("env") or {}).get("storage_type", ""),
