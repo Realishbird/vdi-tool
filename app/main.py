@@ -156,6 +156,9 @@ async def ci_done(key: str):
 # -------------------------------------------------------------- templates
 
 class TemplateReq(BaseModel):
+    os: str = Field("linux", pattern="^(linux|windows)$")
+    win_iso: str | None = Field(None, pattern=r"^[\w.-]+:iso/[\w. ()-]+\.iso$")
+    virtio_iso: str | None = Field(None, pattern=r"^[\w.-]+:iso/[\w. ()-]+\.iso$")
     image: str = "ubuntu-24.04"
     name: str = Field("vdi-linux-golden", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,40}$")
     node: str
@@ -195,20 +198,34 @@ async def deploy_state():
         batches.append({**{k: v for k, v in b.items() if k not in ("vms", "pwhash")}, "id": bid,
                         "count": len(b["vms"]), "counts": counts, "errors": errors,
                         "first": b["vms"][0]["vmid"], "last": b["vms"][-1]["vmid"]})
-    return {"images": {k: v["label"] for k, v in deploy.IMAGES.items()},
+    isos = []
+    try:
+        node_names = [n["node"] for n in await pve.get("/nodes") if n.get("status") == "online"]
+        for st in await pve.get("/storage"):
+            if "iso" in st.get("content", ""):
+                for n in node_names:
+                    for c in await pve.get(f"/nodes/{n}/storage/{st['storage']}/content", content="iso"):
+                        isos.append({"node": n, "volid": c["volid"], "size": c.get("size", 0)})
+    except PVEError:
+        pass  # ISO listing is a convenience; the page still works without it
+    return {"isos": isos, "images": {k: v["label"] for k, v in deploy.IMAGES.items()},
             "templates": sorted(templates.values(), key=lambda t: t["vmid"]),
             "batches": sorted(batches, key=lambda b: b["created"], reverse=True)}
 
 
 @app.post("/api/templates")
 async def create_template(req: TemplateReq, request: Request):
-    if req.image not in deploy.IMAGES:
+    if req.os == "windows" and not (req.win_iso and req.virtio_iso):
+        raise HTTPException(400, "pick the Windows ISO and the VirtIO driver ISO")
+    if req.os == "linux" and req.image not in deploy.IMAGES:
         raise HTTPException(400, "unknown image")
     used = await _call(deploy.used_vmids(pve))
     vmid = deploy.free_ids(used | {int(k) for k in state.data["templates"]}, 9000, 1)[0]
     state.data["templates"][str(vmid)] = {
         **req.model_dump(exclude={"password"}), "pwhash": deploy.hash_pw(req.password), "vmid": vmid, "status": "building", "step": "queued",
         "created": time.time(), "ci_base": _ci_base(request)}
+    if req.os == "windows":
+        deploy._secrets[str(vmid)] = req.password  # needed in the answer file; never written to state
     state.save()
     deploy.spawn(deploy.build_template(pve, str(vmid)))
     return {"vmid": vmid}
@@ -231,6 +248,13 @@ async def delete_template(vmid: int):
             await _call(pve.wait_task(node, await _call(pve.post(f"/nodes/{node}/qemu/{vmid}/status/stop"))))
         upid = await _call(pve.delete(f"/nodes/{node}/qemu/{vmid}", purge=1))
         await _call(pve.wait_task(node, upid))
+    if t.get("win_iso"):
+        # A failed Windows build can leave its answer-file ISO (which holds the password) behind.
+        store = t["win_iso"].split(":")[0]
+        try:
+            await pve.delete(f"/nodes/{t['node']}/storage/{store}/content/{store}:iso/vdi-unattend-{vmid}.iso")
+        except PVEError:
+            pass
     del state.data["templates"][str(vmid)]
     state.data["hosts"].pop(f"t{vmid}", None)
     state.save()
@@ -280,6 +304,7 @@ async def create_batch(req: BatchReq, request: Request):
         "storage": target_storage, "full": full, "cores": req.cores, "memory": req.memory,
         "start": req.start, "concurrency": req.concurrency, "prefix": req.prefix,
         "pwhash": deploy.hash_pw(req.password) if req.password else None,
+        "os": "windows" if str(cfg.get("ostype", "")).startswith("win") else "linux",
         "status": "deploying", "created": time.time(), "ci_base": _ci_base(request), "vms": vms}
     state.save()
     deploy.spawn(deploy.deploy_batch(pve, bid))
@@ -346,6 +371,8 @@ async def start_run(req: RunReq, request: Request):
     b = state.data["batches"].get(req.batch)
     if not b or b["status"] not in ("ready", "partial"):
         raise HTTPException(400, "batch not found or not ready")
+    if b.get("os") == "windows" and req.profile != "bootstorm":
+        raise HTTPException(400, "Windows desktops only support the boot storm run for now")
     if runs.active():
         raise HTTPException(409, "another run is in progress")
     r = runs.create(req.batch, req.profile, req.duration, req.ramp, _ci_base(request))

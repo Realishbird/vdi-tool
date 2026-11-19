@@ -23,7 +23,7 @@ See the top of `install.sh` for the full list.
 ## Status
 
 - [x] Step 1: installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
-- [ ] Step 2: golden images and fast batch deploy (linked clones). Linux template, batch deploy and teardown are in; Windows is next
+- [ ] Step 2: golden images and fast batch deploy (linked clones). Linux and Windows 11 templates, batch deploy and teardown are in
 - [ ] Step 3: workload harness. Office, disk, CPU and boot storm runs on Linux desktops are in; Windows is next
 - [ ] Step 4: metrics and reports (Prometheus, Grafana, run comparisons)
 

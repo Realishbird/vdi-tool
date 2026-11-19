@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from . import windows
 from .pve import PVE, PVEError
 
 STATE_DIR = Path(os.environ.get("VDI_STATE_DIR", "/var/lib/vdi-tool"))
@@ -70,6 +71,7 @@ def hash_pw(password: str) -> str:
 state = State()
 _tasks: set[asyncio.Task] = set()
 _done_events: dict[str, asyncio.Event] = {}
+_secrets: dict[str, str] = {}  # plain passwords needed during a Windows build; memory only
 
 
 def spawn(coro) -> None:
@@ -208,6 +210,10 @@ async def build_template(pve: PVE, key: str) -> None:
         state.save()
 
     try:
+        if t.get("os") == "windows":
+            await _build_windows(pve, t, log)
+            t.update(status="ready", step="", finished=time.time())
+            return
         volid = await _ensure_image(pve, node, IMAGES[t["image"]], log)
         log("creating the VM")
         ci_key = f"t{vmid}"
@@ -245,9 +251,68 @@ async def build_template(pve: PVE, key: str) -> None:
     except Exception as e:  # noqa: BLE001 - surface every failure in the GUI
         t.update(status="failed", error=str(e))
     finally:
+        _secrets.pop(key, None)
         t.pop("pwhash", None)  # only needed while the build runs
         _done_events.pop(f"t{vmid}", None)
         state.save()
+
+
+async def _build_windows(pve: PVE, t: dict, log) -> None:
+    node, vmid, storage = t["node"], t["vmid"], t["storage"]
+    ci_key = f"t{vmid}"
+    iso_store = t["win_iso"].split(":")[0]
+    answer_name = f"vdi-unattend-{vmid}.iso"
+    answer_vol = f"{iso_store}:iso/{answer_name}"
+    ev = _done_events[ci_key] = asyncio.Event()
+    try:
+        log("preparing the answer file")
+        iso = windows.make_iso(
+            windows.unattend_xml(t["name"][:15], _secrets[str(vmid)]),
+            windows.setup_ps1(f"{t['ci_base']}/ci/{ci_key}/done"))
+        try:
+            with open(iso, "rb") as f:
+                await pve.wait_task(node, await pve.upload(node, iso_store, "iso", answer_name, f))
+        finally:
+            for p in (iso, iso.parent / "src" / "autounattend.xml", iso.parent / "src" / "vdi-setup.ps1"):
+                p.unlink(missing_ok=True)
+        log("creating the VM")
+        upid = await pve.request(
+            "POST", f"/nodes/{node}/qemu", timeout=120,
+            vmid=vmid, name=t["name"], memory=t["memory"], cores=t["cores"], cpu="host",
+            ostype="win11", machine="q35", bios="ovmf", scsihw="virtio-scsi-single", agent="enabled=1",
+            efidisk0=f"{storage}:1,efitype=4m,pre-enrolled-keys=1", tpmstate0=f"{storage}:1,version=v2.0",
+            scsi0=f"{storage}:{t['disk_gb']},discard=on,ssd=1,iothread=1",
+            net0=f"virtio,bridge={t['bridge']}",
+            ide2=f"{t['win_iso']},media=cdrom", sata0=f"{t['virtio_iso']},media=cdrom",
+            sata1=f"{answer_vol},media=cdrom", boot="order=scsi0;ide2", tags=TEMPLATE_TAG,
+            description="Built by vdi-tool. User: vdi")
+        await pve.wait_task(node, upid)
+        log("installing Windows (20 to 40 minutes)")
+        await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/status/start"))
+        await windows.press_any_key(pve, node, vmid)
+        try:
+            await asyncio.wait_for(ev.wait(), 120 * 60)
+        except asyncio.TimeoutError:
+            raise PVEError("Windows setup did not finish in 2 hours; open the VM console to see where it stopped")
+        log("waiting for shutdown")
+        for _ in range(200):
+            st = await pve.get(f"/nodes/{node}/qemu/{vmid}/status/current")
+            if st.get("status") == "stopped":
+                break
+            await asyncio.sleep(3)
+        else:
+            raise PVEError("Windows reported finished but did not shut down")
+        log("converting to a template")
+        await pve.put(f"/nodes/{node}/qemu/{vmid}/config", delete="ide2,sata0,sata1", boot="order=scsi0")
+        await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/template"))
+    finally:
+        _done_events.pop(ci_key, None)
+        try:  # the answer file holds the password; never leave it on the host
+            cfg = await pve.get(f"/nodes/{node}/qemu/{vmid}/config") if vmid in await used_vmids(pve) else {}
+            if answer_vol not in str(cfg.get("sata1", "")):
+                await pve.delete(f"/nodes/{node}/storage/{iso_store}/content/{answer_vol}")
+        except PVEError:
+            pass
 
 
 # -------------------------------------------------------------------- batches
@@ -301,7 +366,7 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
                     state.data["pw"][ci_key] = b["pwhash"]
                 await _retry(lambda: pve.put(
                     f"/nodes/{node}/qemu/{vmid}/config",
-                    smbios1=smbios(f"{b['ci_base']}/ci/{ci_key}/"),
+                    smbios1=None if b.get("os") == "windows" else smbios(f"{b['ci_base']}/ci/{ci_key}/"),
                     tags=f"vdi;vdi-batch-{bid}", cores=b.get("cores"), memory=b.get("memory")))
                 vm["status"] = "created"
                 if b["start"]:

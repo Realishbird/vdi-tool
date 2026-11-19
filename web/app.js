@@ -93,6 +93,9 @@ function renderDeploy() {
   document.querySelectorAll(".f-bridge").forEach((el) => opts(el, [...new Set(data.networks.map((b) => b.iface))].map((b) => [b, b])));
   opts($("#f-bstorage"), [["", "Same as template (linked clones)"], ...uniq.map((s) => [s.id, `${storeLabel(s)}: full clones if different`])]);
   opts($("#f-image"), Object.entries(dep.images));
+  const isoName = (i) => i.volid.split("/").pop(), isVirtio = (i) => /virtio/i.test(i.volid);
+  opts($("#f-winiso"), dep.isos.filter((i) => !isVirtio(i)).map((i) => [i.volid, `${isoName(i)} (${bytes(i.size)})`]));
+  opts($("#f-virtioiso"), dep.isos.filter(isVirtio).map((i) => [i.volid, `${isoName(i)} (${bytes(i.size)})`]));
   const ready = dep.templates.filter((t) => t.status === "ready" && t.exists);
   opts($("#f-template"), ready.map((t) => [t.vmid, `${t.vmid} · ${t.name}`]));
 
@@ -255,6 +258,7 @@ const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
   btn.disabled = false; btn.textContent = label;
 });
 submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
+submitOnce($("#win-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
 submitOnce($("#batch-form"), async (f) => { await api("POST", "/api/batches", formData(f)); f.password.value = ""; });
 submitOnce($("#run-form"), async (f) => { selRun = (await api("POST", "/api/runs", formData(f))).id; runDetail = null; });
 document.addEventListener("click", async (e) => {

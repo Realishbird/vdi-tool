@@ -70,7 +70,25 @@
             <span class="hint">Needs DHCP and internet on the bridge. Takes roughly 10 minutes.</span></div>
         </form>
       </details>
-      <p class="hint">Windows templates come later in this step. Any existing Proxmox template can be used for a batch.</p>
+      <details class="card form-card">
+        <summary>Build a Windows 11 template</summary>
+        <form id="win-form" class="form">
+          <input type="hidden" name="os" value="windows">
+          <label>Windows ISO<select name="win_iso" id="f-winiso" required></select></label>
+          <label>VirtIO driver ISO<select name="virtio_iso" id="f-virtioiso" required></select></label>
+          <label>Name<input name="name" value="vdi-win11-golden" required maxlength="15"></label>
+          <label>Node<select name="node" class="f-node"></select></label>
+          <label>Storage<select name="storage" class="f-storage"></select></label>
+          <label>Bridge<select name="bridge" class="f-bridge"></select></label>
+          <label>Cores<input name="cores" type="number" value="4" min="2"></label>
+          <label>Memory (MB)<input name="memory" type="number" value="8192" min="4096" step="1024"></label>
+          <label>Disk (GB)<input name="disk_gb" type="number" value="64" min="52"></label>
+          <label>Password for user "vdi"<input name="password" type="password" required minlength="4" autocomplete="new-password"></label>
+          <div class="form-actions"><button class="btn primary">Build template</button>
+            <span class="hint">Installs Windows 11 Pro hands-free, with VirtIO drivers, the guest agent and Remote Desktop. Takes 20 to 40 minutes. Not activated; clones share one computer name for now.</span></div>
+        </form>
+      </details>
+      <p class="hint">Upload ISOs to Proxmox first. Any existing Proxmox template can be used for a batch.</p>
 
       <h2>Batches</h2>
       <div class="card form-card">
@@ -81,7 +99,7 @@
           <label>Storage<select name="storage" id="f-bstorage"></select></label>
           <label>Cores (blank = template)<input name="cores" type="number" min="1"></label>
           <label>Memory MB (blank = template)<input name="memory" type="number" min="512" step="512"></label>
-          <label>Password for "vdi" (blank = template's)<input name="password" type="password" minlength="4" autocomplete="new-password"></label>
+          <label>Password for "vdi" (Linux only; blank = template's)<input name="password" type="password" minlength="4" autocomplete="new-password"></label>
           <label>Parallel clones<input name="concurrency" type="number" value="4" min="1" max="32"></label>
           <label class="check"><input name="start" type="checkbox" checked> Start after creating</label>
           <div class="form-actions"><button class="btn primary">Deploy batch</button></div>
