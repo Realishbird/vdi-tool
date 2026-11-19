@@ -33,9 +33,15 @@ The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/bui
   target storage and filling disks with real data for capacity tests.
 - **Workloads**: office worker, VDI knowledge worker disk, disk stress, database, sequential read and write, max throughput,
   CPU stress, fill disk and boot storm, plus your own fio patterns. Every desktop in a batch runs the workload at the same moment.
-- **Metrics**: per desktop, per host and per run. Prometheus, the Proxmox exporter and Grafana (port 3000) are installed with a dashboard.
+- **Density tests**: run the same workload on a growing number of desktops and see how many fit under a latency target.
+- **Metrics**: per desktop, per host and per run. Prometheus, the Proxmox exporter and Grafana (port 3000) are installed with
+  four dashboards: overview, benchmark runs, desktop drilldown, and storage and network links. Run results are also
+  exported at `/metrics`.
 - **Reports**: a printable report per run (validity, what limited the run, key results, charts, outliers), side by side
   comparison of runs with percentage change and a pass or fail target, and CSV and JSON export.
+- **Windows desktops**: disk workloads with Microsoft DiskSpd, a unique computer name per clone, and an option to bake
+  the [EUC Score](https://eucscore.com/) base package into the Windows template for user experience tests.
+- **Login**: an optional admin password for the GUI and API, with an API key for scripts.
 
 ## How a run works, in short
 
@@ -44,6 +50,25 @@ The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/bui
 3. When all desktops are ready the tool says go, so they all load the storage together.
 4. Desktops report their results. The tool also samples Proxmox's own counters and flags a run when the two disagree.
 
+## Grafana dashboards
+
+| Dashboard | What it shows |
+|---|---|
+| VDI overview | Desktops running, host CPU and memory, total desktop disk and network, top 10 desktops, storage used, the run in progress |
+| VDI benchmark runs | Every finished run by workload, storage and clone type: IOPS, throughput, p95 latency, peak host CPU, validity |
+| VDI desktop drilldown | CPU, memory, disk and network for one desktop or any group of them, and the spread between slowest and fastest |
+| VDI storage and network links | Per port throughput against the link ceiling, errors and drops, per disk IOPS and latency on the host |
+
+The storage and network links dashboard needs `prometheus-node-exporter` on the Proxmox host (port 9100):
+`apt-get install -y prometheus-node-exporter`. The installer does not put anything on the host beyond the container and the API token.
+
+## EUC Score
+
+EUC Score measures what a user experiences in a desktop session. It is not part of this repository and the tool never
+downloads it. Download `Install-EUCScoreBase.zip` from eucscore.com yourself, accept its agreement, and upload it on the
+Templates page. A Windows template built with "Include EUC Score" installs it silently to `C:\EUCScore` and keeps the `vdi`
+user logged on, because its tests need a desktop session. Check its licence terms for your organization before use.
+
 ## Status
 
 - [x] Installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
@@ -51,14 +76,20 @@ The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/bui
 - [x] Workload harness on Linux desktops, workload library, capacity fill, boot storm
 - [x] Prometheus and Grafana, run reports, run comparison, density tests, export
 - [x] Windows: unique computer name per clone and disk workloads with DiskSpd (office, CPU and fill are Linux only; clones still share a machine ID)
-- [ ] Array testing: storage targets per protocol (NFS, iSCSI, NVMe-oF, FC), per-link network metrics, host-direct fio
-- [ ] Real-applications workload, GUI login, narrower API token
+- [x] Live run metrics, four Grafana dashboards, optional GUI login
+- [x] EUC Score package upload and Windows template option
+- [ ] EUC Score probe workload: run Simloads on chosen desktops and pull the results into the run report
+- [ ] Array testing: storage targets per protocol (NFS, iSCSI, NVMe-oF, FC), host-direct fio
+- [ ] Real-applications workload, narrower API token
 
 ## Security notes
 
-The GUI has no login yet and the API token has the PVEAdmin role. Keep port 8080 on a trusted network.
-The tool also serves cloud-init data to the desktops on that port, including the template build config
-(with the `vdi` user's password) while a template exists.
+The GUI is open until you set an admin password with the Login button; set one unless the network is trusted.
+After that, pages and the API need a login or the API key in `/var/lib/vdi-tool/api-key` (sent as a Bearer token).
+The paths desktops use (first-boot config, workload downloads, result reports) stay open, including the template
+build config with the `vdi` user's password while a template exists. Grafana ships with its default admin login:
+change it on first use. The API token has the PVEAdmin role. Templates built with EUC Score keep the `vdi` password
+in the Windows registry for automatic logon, so use them for test desktops only.
 
 ## Layout
 
@@ -67,5 +98,11 @@ The tool also serves cloud-init data to the desktops on that port, including the
 - `app/`: FastAPI backend (Proxmox API client)
 - `web/`: GUI and the report page (static HTML, CSS, JS)
 - `agent/`: workload script the desktops download for benchmark runs
-- `grafana/`: provisioned dashboard
+- `grafana/`: provisioned dashboards
 - `docs/`: the guide (PDF) and its source
+
+
+## License
+
+[MIT](LICENSE). Tools the installer downloads keep their own licences: Microsoft DiskSpd (MIT), fio (GPL-2.0),
+Prometheus and its exporters (Apache-2.0), Grafana (AGPL-3.0). EUC Score is a separate product with its own agreement.
