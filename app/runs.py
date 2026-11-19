@@ -178,6 +178,23 @@ async def _exec(pve: PVE, vm: dict, command: list[str]) -> None:
     await pve.request("POST", f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent/exec", command=command)
 
 
+async def _why(pve: PVE, vm: dict) -> str:
+    """Ask a silent desktop what its workload was doing, to explain a missing report."""
+    base = f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent"
+    cmd = ("echo \"procs: $(pgrep -fc vdi-workload.py) agent, $(pgrep -xc fio) fio\"; "
+           "ls -la --time-style=+%H:%M:%S /var/tmp/vdi-workload 2>&1 | tail -n 3; tail -c 300 /tmp/vdi-workload.log 2>&1")
+    try:
+        pid = (await pve.request("POST", f"{base}/exec", command=["bash", "-c", cmd]))["pid"]
+        for _ in range(10):
+            await asyncio.sleep(1)
+            st = await pve.get(f"{base}/exec-status", pid=pid)
+            if st.get("exited"):
+                return " | ".join((st.get("out-data") or "").split("\n"))[:500]
+    except Exception as e:  # diagnostics must never break the run
+        return f"could not ask the desktop: {e}"[:200]
+    return ""
+
+
 async def _agent_up(pve: PVE, vm: dict) -> bool:
     try:
         await pve.request("POST", f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent/ping", timeout=5)
@@ -220,6 +237,16 @@ async def _workload(pve: PVE, r: dict) -> None:
             if vm["status"] in busy:
                 vm.update(status="failed", error=f"no report while {vm['status']} (the desktop may not reach this tool)")
 
+    try:
+        await _timed(r, vms, wait)
+    finally:
+        for vm in [v for v in vms if v["status"] == "failed" and "could not start" not in v.get("error", "")][:10]:
+            why = await _why(pve, vm)
+            if why:
+                vm["error"] += " Desktop says: " + why
+
+
+async def _timed(r: dict, vms: list[dict], wait) -> None:
     if r["kind"] == "fio":
         # Every desktop writes its test file first and they all share the storage, so the
         # allowance grows with the total amount written (assumes at least 200 MB/s overall).
