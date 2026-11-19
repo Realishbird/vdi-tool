@@ -282,7 +282,8 @@ async def deploy_batch(pve: PVE, bid: str) -> None:
                 vm.update(status="failed", error=str(e))
 
     await asyncio.gather(*(one(vm) for vm in b["vms"]))
-    b.update(status="ready", finished=time.time())
+    failed = any(vm["status"] == "failed" for vm in b["vms"])
+    b.update(status="partial" if failed else "ready", finished=time.time())
     state.save()
 
 
@@ -299,7 +300,9 @@ async def delete_batch(pve: PVE, bid: str) -> None:
                     # Only ever remove VMs that still carry this batch's tag.
                     cfg = await pve.get(f"/nodes/{node}/qemu/{vmid}/config")
                     if f"vdi-batch-{bid}" not in cfg.get("tags", ""):
-                        raise PVEError("VM no longer carries this batch's tag; left untouched")
+                        # Not ours (for example the clone failed because the ID was taken): leave it alone.
+                        vm["status"] = "deleted"
+                        return
                     st = await pve.get(f"/nodes/{node}/qemu/{vmid}/status/current")
                     if st.get("status") != "stopped":
                         await pve.wait_task(node, await pve.post(f"/nodes/{node}/qemu/{vmid}/status/stop"))
@@ -317,6 +320,11 @@ async def delete_batch(pve: PVE, bid: str) -> None:
     else:
         b["status"] = "delete-incomplete"
     state.save()
+
+
+def reserved_ids() -> set[int]:
+    """IDs promised to batches that are still deploying."""
+    return {vm["vmid"] for b in state.data["batches"].values() if b["status"] == "deploying" for vm in b["vms"]}
 
 
 def new_id() -> str:

@@ -21,29 +21,7 @@ function show(view) {
   if (!TITLES[view]) view = "overview";
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $(`#view-${view}`).classList.remove("hidden");
-  // Disable the submit button while a request is in flight so a double click cannot start two jobs.
-const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const btn = form.querySelector("button"), label = btn.textContent;
-  if (btn.disabled) return;
-  btn.disabled = true; btn.textContent = "Starting…";
-  try { await fn(form); await load(); } catch (x) { fail(x); }
-  btn.disabled = false; btn.textContent = label;
-});
-submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
-submitOnce($("#batch-form"), (f) => api("POST", "/api/batches", formData(f)));
-document.addEventListener("click", async (e) => {
-  const t = e.target.dataset;
-  try {
-    if (t.delBatch && window.confirm(`Stop and permanently delete every desktop in batch ${t.delBatch}?`)) { await api("DELETE", `/api/batches/${t.delBatch}`); load(); }
-    if (t.delTmpl && window.confirm(`Permanently delete template ${t.delTmpl}? Linked clones made from it must be deleted first.`)) { await api("DELETE", `/api/templates/${t.delTmpl}`); load(); }
-  } catch (x) { fail(x); }
-});
-$("#update").addEventListener("click", async () => {
-  if (!window.confirm("Update vdi-tool to the latest revision? The GUI restarts for a few seconds.")) return;
-  try { await api("POST", "/api/update"); $("#update").textContent = "Updating…"; setTimeout(() => location.reload(), 20000); } catch (x) { fail(x); }
-});
-document.querySelectorAll("nav a[data-view]").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  document.querySelectorAll("nav a[data-view]").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
   $("#title").textContent = TITLES[view];
 }
 
@@ -173,6 +151,28 @@ async function load() {
   } catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
 }
 
+// Disable the submit button while a request is in flight so a double click cannot start two jobs.
+const submitOnce = (form, fn) => form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = form.querySelector("button"), label = btn.textContent;
+  if (btn.disabled) { return; }
+  btn.disabled = true; btn.textContent = "Starting…";
+  try { await fn(form); await load(); } catch (x) { fail(x); }
+  btn.disabled = false; btn.textContent = label;
+});
+submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
+submitOnce($("#batch-form"), (f) => api("POST", "/api/batches", formData(f)));
+document.addEventListener("click", async (e) => {
+  const t = e.target.dataset;
+  try {
+    if (t.delBatch && window.confirm(`Stop and permanently delete every desktop in batch ${t.delBatch}?`)) { await api("DELETE", `/api/batches/${t.delBatch}`); load(); }
+    if (t.delTmpl && window.confirm(`Permanently delete template ${t.delTmpl}? Linked clones made from it must be deleted first.`)) { await api("DELETE", `/api/templates/${t.delTmpl}`); load(); }
+  } catch (x) { fail(x); }
+});
+$("#update").addEventListener("click", async () => {
+  if (!window.confirm("Update vdi-tool to the latest revision? The GUI restarts for a few seconds.")) return;
+  try { await api("POST", "/api/update"); $("#update").textContent = "Updating…"; setTimeout(() => location.reload(), 20000); } catch (x) { fail(x); }
+});
 document.querySelectorAll("nav a[data-view]").forEach((a) => a.addEventListener("click", () => show(a.dataset.view)));
 window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 $("#refresh").addEventListener("click", load);

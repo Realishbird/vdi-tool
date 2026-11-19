@@ -82,5 +82,5 @@ details .form { margin-top: 16px; }
 .batch-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .batch-head .sub { color: var(--muted); font-size: 13px; }
 .errs { color: var(--bad); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
-.status-building, .status-deploying, .status-deleting { color: var(--warn); }
+.status-partial, .status-building, .status-deploying, .status-deleting { color: var(--warn); }
 .status-ready { color: var(--ok); } .status-failed, .status-interrupted, .status-delete-incomplete { color: var(--bad); }

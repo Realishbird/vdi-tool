@@ -268,7 +268,8 @@ async def create_batch(req: BatchReq, request: Request):
     if nodes != [node] and not shared:
         raise HTTPException(400, f"storage {target_storage} is local to {node}; other nodes need shared storage")
     used = {int(r["vmid"]) for r in res if r.get("type") in ("qemu", "lxc")}
-    ids = deploy.free_ids(used, 1000, req.count)
+    # No await between here and saving the batch, so two requests cannot pick the same IDs.
+    ids = deploy.free_ids(used | deploy.reserved_ids(), 1000, req.count)
     bid = deploy.new_id()
     width = max(3, len(str(req.count)))
     vms = [{"vmid": vmid, "name": f"{req.prefix}-{bid}-{i + 1:0{width}d}", "node": nodes[i % len(nodes)],
