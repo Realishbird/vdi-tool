@@ -3,7 +3,7 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (v) => (typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : esc(v ?? "-"));
 const when = (t) => new Date(t * 1000).toLocaleString();
-const S1 = "#2f6fd0", S2 = "#c2500f";
+const S1 = "var(--s1)", S2 = "var(--s2)";
 
 // label, and whether a higher value is better (null = neither)
 const METRICS = {

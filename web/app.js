@@ -124,7 +124,7 @@ function renderDeploy() {
 
 
 // ------------------------------------------------------------ benchmarks
-const C1 = "#3987e5", C2 = "#d95926";  // validated series colours for the dark surface
+const C1 = "var(--s1)", C2 = "var(--s2)";  // series colours follow the theme
 const fmt = (v) => (v >= 100 ? Math.round(v) : v >= 10 ? v.toFixed(1) : v.toFixed(2)).toString();
 const niceMax = (m) => { if (m <= 0) return 1; const p = 10 ** Math.floor(Math.log10(m)); return [1, 2, 5, 10].map((k) => k * p).find((k) => k >= m); };
 

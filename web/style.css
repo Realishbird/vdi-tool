@@ -1,10 +1,11 @@
 :root {
-  --bg: #0f1419; --panel: #171e26; --panel-2: #1e2731; --line: #2a3542;
-  --text: #e6edf3; --muted: #8b98a5; --accent: #4da3ff; --ok: #3fb97f;
-  --warn: #e3a33b; --bad: #ef5b5b; --radius: 10px;
+  --bg: #0f1419; --panel: #171e26; --panel-2: #1e2731; --line: #2a3542; --text: #e6edf3; --muted: #8b98a5; --accent: #4da3ff; --ok: #3fb97f; --warn: #e3a33b; --bad: #ef5b5b; --on-accent: #06121f; --s1: #3987e5; --s2: #d95926; color-scheme: dark;
+  --radius: 10px;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px; color: var(--text); background: var(--bg);
 }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f3f5f8; --panel: #ffffff; --panel-2: #eef1f5; --line: #d5dbe3; --text: #17202b; --muted: #5b6876; --accent: #1f5fbf; --ok: #19794a; --warn: #9a6400; --bad: #b3261e; --on-accent: #ffffff; --s1: #2f6fd0; --s2: #c2500f; color-scheme: light; } }
+:root[data-theme="light"] { --bg: #f3f5f8; --panel: #ffffff; --panel-2: #eef1f5; --line: #d5dbe3; --text: #17202b; --muted: #5b6876; --accent: #1f5fbf; --ok: #19794a; --warn: #9a6400; --bad: #b3261e; --on-accent: #ffffff; --s1: #2f6fd0; --s2: #c2500f; color-scheme: light; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); }
 .shell { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
@@ -65,7 +66,7 @@ h2 { font-size: 16px; color: var(--muted); font-weight: 600; margin: 28px 0 12px
 h2.first { margin-top: 0; }
 .link { color: var(--accent); cursor: pointer; text-decoration: none; }
 .link:hover { text-decoration: underline; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .btn.danger { color: var(--bad); }
 .btn.small { padding: 4px 10px; font-size: 13px; }
 .btn:disabled { opacity: .5; cursor: default; }
