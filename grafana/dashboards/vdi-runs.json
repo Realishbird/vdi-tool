@@ -6,7 +6,7 @@
  ],
  "timezone": "browser",
  "schemaVersion": 39,
- "version": 1,
+ "version": 2,
  "refresh": "30s",
  "time": {
   "from": "now-6h",
@@ -172,7 +172,7 @@
   {
    "id": 3,
    "type": "stat",
-   "title": "Best total IOPS",
+   "title": "Best total IOPS (valid runs)",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
@@ -205,7 +205,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"})",
+     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "instant": true
     }
    ]
@@ -213,7 +213,7 @@
   {
    "id": 4,
    "type": "stat",
-   "title": "Best throughput",
+   "title": "Best throughput (valid runs)",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
@@ -246,7 +246,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"})",
+     "expr": "max(vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "instant": true
     }
    ]
@@ -254,7 +254,7 @@
   {
    "id": 5,
    "type": "bargauge",
-   "title": "Total IOPS by run (top 15)",
+   "title": "Total IOPS by run (top 15, valid runs only)",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
@@ -293,7 +293,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"})",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_iops\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -302,7 +302,7 @@
   {
    "id": 6,
    "type": "bargauge",
-   "title": "Throughput by run (top 15)",
+   "title": "Throughput by run (top 15, valid runs only)",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
@@ -341,7 +341,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"})",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"total_mbps\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -350,7 +350,7 @@
   {
    "id": 7,
    "type": "bargauge",
-   "title": "p95 latency by run (highest 15)",
+   "title": "p95 latency by run (highest 15, valid runs only)",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
@@ -389,7 +389,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"p95_ms\"})",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"p95_ms\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -398,7 +398,7 @@
   {
    "id": 8,
    "type": "bargauge",
-   "title": "Peak host CPU by run (highest 15)",
+   "title": "Peak host CPU by run (highest 15, valid runs only)",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
@@ -437,7 +437,7 @@
       "type": "prometheus",
       "uid": "vdi-prom"
      },
-     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"peak_host_cpu\"})",
+     "expr": "topk(15, vdi_run_result{workload=~\"$workload\",storage=~\"$storage\",clone=~\"$clone\",measure=\"peak_host_cpu\"} * on(run) group_left() (vdi_run_valid >= bool 0.5 > 0))",
      "legendFormat": "{{run}} {{workload}} on {{storage}} ({{clone}})",
      "instant": true
     }
@@ -600,7 +600,7 @@
   {
    "id": 10,
    "type": "table",
-   "title": "All finished runs",
+   "title": "All finished runs, including ones marked not valid",
    "datasource": {
     "type": "prometheus",
     "uid": "vdi-prom"
