@@ -92,6 +92,7 @@ function renderDeploy() {
   document.querySelectorAll(".f-storage").forEach((el) => opts(el, uniq.map((s) => [s.id, storeLabel(s)])));
   document.querySelectorAll(".f-bridge").forEach((el) => opts(el, [...new Set(data.networks.map((b) => b.iface))].map((b) => [b, b])));
   opts($("#f-bstorage"), [["", "Same as template"], ...uniq.map((s) => [s.id, `${storeLabel(s)}: full clones if different`])]);
+  $("#store-fill").textContent = uniq.map((s) => `${s.id}: ${pct(s.used, s.total)}% full, ${bytes(s.total - s.used)} free`).join(" · ") + ". Fills are refused past 90%.";
   opts($("#f-image"), Object.entries(dep.images));
   const isoName = (i) => i.volid.split("/").pop(), isVirtio = (i) => /virtio/i.test(i.volid);
   opts($("#f-winiso"), dep.isos.filter((i) => !isVirtio(i)).map((i) => [i.volid, `${isoName(i)} (${bytes(i.size)})`]));
@@ -235,7 +236,7 @@ const formData = (form) => {
   for (const el of form.elements) {
     if (!el.name) continue;
     if (el.type === "checkbox") o[el.name] = el.checked;
-    else if (el.value !== "") o[el.name] = el.type === "number" ? Number(el.value) : el.name === "full" ? true : el.value;
+    else if (el.value !== "") o[el.name] = el.type === "number" ? Number(el.value) : el.value;
   }
   return o;
 };
