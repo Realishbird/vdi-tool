@@ -393,4 +393,7 @@ app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")
 
 @app.get("/")
 async def index():
-    return FileResponse(ROOT / "web" / "index.html")
+    # Version the asset URLs so browsers never pair a new page with cached old scripts.
+    html = (ROOT / "web" / "index.html").read_text()
+    html = html.replace("/static/style.css", f"/static/style.css?v={VERSION}").replace("/static/app.js", f"/static/app.js?v={VERSION}")
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache"})
