@@ -20,12 +20,40 @@ VDI_HOSTNAME=vdi-tool VDI_STORAGE=local-lvm VDI_IP=10.0.0.50/24 VDI_GW=10.0.0.1 
 
 See the top of `install.sh` for the full list.
 
+## Guide
+
+**[Read the guide (PDF)](docs/vdi-tool-guide.pdf)**: how the tool works, with screenshots and diagrams. It covers the
+architecture, templates, batch deploy, workloads, metrics, reports, measured results and known limits.
+The source is `docs/guide/guide.html`; rebuild the PDF with `node docs/guide/build.js`.
+
+## What it does
+
+- **Golden templates**: builds Ubuntu 24.04 (XFCE, xrdp) and Windows 11 templates hands-free, or uses any existing Proxmox template.
+- **Batch deploy**: linked clones (100 desktops in about a minute) or full clones, with options for disk size, cores, memory,
+  target storage and filling disks with real data for capacity tests.
+- **Workloads**: office worker, VDI knowledge worker disk, disk stress, database, sequential read and write, max throughput,
+  CPU stress, fill disk and boot storm, plus your own fio patterns. Every desktop in a batch runs the workload at the same moment.
+- **Metrics**: per desktop, per host and per run. Prometheus, the Proxmox exporter and Grafana (port 3000) are installed with a dashboard.
+- **Reports**: a printable report per run (validity, what limited the run, key results, charts, outliers), side by side
+  comparison of runs with percentage change and a pass or fail target, and CSV and JSON export.
+
+## How a run works, in short
+
+1. The tool starts the workload in every desktop through the QEMU guest agent.
+2. Each desktop downloads the workload script from the tool and, for disk tests, writes its test file with real random data.
+3. When all desktops are ready the tool says go, so they all load the storage together.
+4. Desktops report their results. The tool also samples Proxmox's own counters and flags a run when the two disagree.
+
 ## Status
 
-- [x] Step 1: installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
-- [ ] Step 2: golden images and fast batch deploy (linked clones). Linux and Windows 11 templates, batch deploy and teardown are in
-- [ ] Step 3: workload harness. Office, disk, CPU and boot storm runs on Linux desktops are in; Windows is next
-- [ ] Step 4: metrics and reports. Prometheus, the Proxmox exporter and Grafana (port 3000) are installed with a ready dashboard, and finished runs are compared side by side
+- [x] Installer, Proxmox connection, inventory GUI (nodes, storage, networks, guests)
+- [x] Golden templates (Linux and Windows 11), batch deploy and teardown
+- [x] Workload harness on Linux desktops, workload library, capacity fill, boot storm
+- [x] Prometheus and Grafana, run reports, run comparison, export
+- [ ] Windows: unique computer names per clone and disk workloads (only boot storm works on Windows today)
+- [ ] Array testing: storage targets per protocol (NFS, iSCSI, NVMe-oF, FC), per-link network metrics, host-direct fio
+- [ ] Density report: "supports N users at p95 below X ms"
+- [ ] Real-applications workload, GUI login, narrower API token
 
 ## Security notes
 
@@ -38,6 +66,7 @@ The tool also serves cloud-init data to the desktops on that port, including the
 - `install.sh`: host-side installer and updater
 - `scripts/`: container setup and systemd unit
 - `app/`: FastAPI backend (Proxmox API client)
-- `web/`: GUI (static HTML, CSS, JS)
+- `web/`: GUI and the report page (static HTML, CSS, JS)
 - `agent/`: workload script the desktops download for benchmark runs
 - `grafana/`: provisioned dashboard
+- `docs/`: the guide (PDF) and its source
