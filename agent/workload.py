@@ -20,7 +20,7 @@ import time
 import urllib.request
 import zlib
 
-WORKDIR = "/var/tmp/vdi-workload"
+WORKDIR = os.environ.get("VDI_WORKDIR", "/var/tmp/vdi-workload")
 
 
 def post(url, payload):
@@ -131,14 +131,66 @@ def fill(duration, report, base):
             "mb_per_s": round(written / 1e6 / secs, 1), "seconds": round(secs), "stopped": stopped}
 
 
+def _get(url):
+    try:
+        return json.loads(urllib.request.urlopen(url, timeout=10).read())
+    except Exception:
+        return {}
+
+
+def _prepare(target, report):
+    """Really write the test file with random data.
+
+    fio's default layout only reserves space (unwritten extents), so reads would come back
+    as zeros from the filesystem without touching the storage and inflate the result.
+    """
+    marker = target + ".ok"
+    want = str(SIZE_GB)
+    try:
+        if open(marker).read().strip() == want and os.path.getsize(target) == SIZE_GB << 30:
+            return
+    except OSError:
+        pass
+    for path in (marker, target):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    post(report, {"type": "preparing"})
+    out = subprocess.run(["fio", "--name=prep", f"--filename={target}", f"--size={SIZE_GB}G", "--rw=write", "--bs=1M",
+                          "--ioengine=libaio", "--iodepth=8", "--direct=1", "--refill_buffers=1", "--fallocate=none",
+                          "--end_fsync=1", "--output-format=json"], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError("could not write the test file: " + (out.stderr.strip()[-250:] or "fio failed"))
+    with open(marker, "w") as fh:
+        fh.write(want)
+
+
 def disk(duration, report, base):
-    """Run fio with the settings in SPEC["fio"]; all jobs share one file of SIZE_GB."""
+    """Run fio with the settings in SPEC["fio"]; all jobs share one file of SIZE_GB.
+
+    The file is written for real first and kept for the next run. The timed part starts
+    only when the harness says every desktop is ready, so all desktops load the storage together.
+    """
     f = SPEC.get("fio", {})
     target = os.path.join(WORKDIR, "fio.dat")
+    subprocess.run(["pkill", "-x", "fio"], capture_output=True)
+    _prepare(target, report)
+    post(report, {"type": "prepared"})
+    go = report.rsplit("/report/", 1)[0] + "/go"
+    while True:
+        state = _get(go)
+        if state.get("go"):
+            break
+        if state.get("over"):
+            raise RuntimeError("the run ended before this desktop was ready")
+        time.sleep(2)
+    post(report, {"type": "started"})
     rw = f.get("rw", "randrw")
     cmd = ["fio", "--name=vdi", f"--filename={target}", f"--size={SIZE_GB}G", f"--rw={rw}",
            f"--iodepth={int(f.get('iodepth', 16))}", f"--numjobs={int(f.get('numjobs', 1))}", "--group_reporting",
-           "--ioengine=libaio", "--direct=1", "--time_based", f"--runtime={duration}", "--output-format=json"]
+           "--ioengine=libaio", "--direct=1", "--fallocate=none", "--time_based", f"--runtime={duration}",
+           "--output-format=json"]
     cmd.append(f"--bssplit={f['bssplit']}" if f.get("bssplit") else f"--bs={f.get('bs', '4k')}")
     mix = int(f.get("rwmixread", 70))
     if rw in ("randrw", "rw"):
@@ -150,11 +202,7 @@ def disk(duration, report, base):
             cmd.append(f"--rate_iops={r},{max(1, rate - r)}")
         else:
             cmd.append(f"--rate_iops={rate}")
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 300 + SIZE_GB * 20)
-    try:
-        os.remove(target)
-    except OSError:
-        pass
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 120)
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip()[-300:] or "fio failed")
     job = json.loads(out.stdout)["jobs"][0]
@@ -195,7 +243,8 @@ def main():
     SIZE_GB = max(1, a.size_gb)
     SPEC = json.loads(base64.b64decode(a.spec))
     os.makedirs(WORKDIR, exist_ok=True)
-    post(a.report, {"type": "started"})
+    if SPEC["kind"] != "fio":  # fio reports "started" itself, once its test file is ready
+        post(a.report, {"type": "started"})
     try:
         fn = {"office": office, "fio": disk, "cpu": cpu, "fill": fill}[SPEC["kind"]]
         post(a.report, {"type": "result", "result": fn(a.duration, a.report, a.base)})

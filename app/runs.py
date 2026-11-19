@@ -122,7 +122,10 @@ def report(rid: str, vmid: str, body: dict[str, Any]) -> None:
     if not vm or r["status"] != "running":
         return
     kind = body.get("type")
-    if kind == "started":
+    if kind in ("preparing", "prepared"):
+        if vm["status"] in ("starting", "preparing"):
+            vm["status"] = kind
+    elif kind == "started":
         vm["status"] = "running"
     elif kind == "sample":
         # 10 second buckets of action latency across all desktops.
@@ -191,7 +194,9 @@ async def _workload(pve: PVE, r: dict) -> None:
         await asyncio.sleep(i * step)
         url = f"{r['base']}/api/runs/{r['id']}/report/{vm['vmid']}"
         spec = base64.b64encode(json.dumps(r["spec"]).encode()).decode()
-        script = (f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
+        # Stop anything left over from an earlier run first, so two workloads never overlap.
+        script = ("pkill -f '^python3 /tmp/vdi-workload' ; pkill -x fio; "
+                  f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
                   f"nohup python3 /tmp/vdi-workload.py --spec {spec} --duration {r['duration']} "
                   f"--report {url} --base {r['base']} --size-gb {r.get('size_gb', 1)} >/tmp/vdi-workload.log 2>&1 &")
         try:
@@ -206,15 +211,25 @@ async def _workload(pve: PVE, r: dict) -> None:
             vm.update(status="failed", error=f"could not start the workload: {e}")
 
     await asyncio.gather(*(launch(i, vm) for i, vm in enumerate(vms)))
-    # Every desktop lays out its test file first and they all share the storage, so the
-    # allowance grows with the total amount written (assumes at least 200 MB/s overall).
-    layout = r.get("size_gb", 1) * max(20, len(vms) * 5) if r["kind"] in ("fio", "fill") else 0
-    deadline = time.time() + r["duration"] + 180 + layout
-    while time.time() < deadline and any(vm["status"] in ("starting", "running") for vm in vms):
-        await asyncio.sleep(2)
-    for vm in vms:
-        if vm["status"] in ("starting", "running"):
-            vm.update(status="failed", error="no result reported (the desktop may not reach this tool)")
+
+    async def wait(seconds: float, busy: tuple[str, ...]) -> None:
+        deadline = time.time() + seconds
+        while time.time() < deadline and any(vm["status"] in busy for vm in vms):
+            await asyncio.sleep(2)
+        for vm in vms:
+            if vm["status"] in busy:
+                vm.update(status="failed", error=f"no report while {vm['status']} (the desktop may not reach this tool)")
+
+    if r["kind"] == "fio":
+        # Every desktop writes its test file first and they all share the storage, so the
+        # allowance grows with the total amount written (assumes at least 200 MB/s overall).
+        await wait(180 + r.get("size_gb", 1) * max(20, len(vms) * 5), ("starting", "preparing"))
+        r["go"] = True
+        r["measure_from"] = round(time.time() - r["created"])
+        await wait(r["duration"] + 180, ("prepared", "running"))
+    else:
+        layout = r.get("size_gb", 1) * max(20, len(vms) * 5) if r["kind"] == "fill" else 0
+        await wait(r["duration"] + 180 + layout, ("starting", "running"))
 
 
 async def _bootstorm(pve: PVE, r: dict) -> None:
@@ -275,7 +290,8 @@ def summarize(r: dict) -> dict:
         t = [d["boot_s"] for d in done]
         out.update(mean_boot_s=round(sum(t) / len(t), 1), p95_boot_s=round(pctl(t, 95), 1), all_up_s=round(max(t), 1))
     if r["samples"]:
-        out["peak_host_cpu"] = max(s["host_cpu"] for s in r["samples"])
+        timed = [s for s in r["samples"] if s["t"] >= r.get("measure_from", 0)] or r["samples"]
+        out["peak_host_cpu"] = max(s["host_cpu"] for s in timed)
     return out
 
 
@@ -297,3 +313,11 @@ def brief(r: dict) -> dict:
         counts[vm["status"]] = counts.get(vm["status"], 0) + 1
     return {k: r.get(k) for k in ("id", "batch", "batch_name", "profile", "profile_name", "kind", "duration", "ramp", "size_gb", "status",
                                   "created", "finished", "summary", "error", "storage")} | {"counts": counts}
+
+
+def go(rid: str) -> dict:
+    """Desktops poll this before the timed part of a disk run, so they all start together."""
+    r = runs.get(rid)
+    if not r or r["status"] != "running":
+        return {"go": False, "over": True}
+    return {"go": bool(r.get("go")), "over": False}

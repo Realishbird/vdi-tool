@@ -41,7 +41,8 @@ class PVE:
         return r.json().get("data")
 
     # Proxmox answers 500 with these when it is momentarily too busy to start a task.
-    _BUSY = ("got no worker upid", "start worker failed", "can't lock file", "got timeout", "trying to acquire lock")
+    _BUSY = ("got no worker upid", "start worker failed", "can't lock file", "got timeout", "trying to acquire lock",
+             "Broken pipe")
 
     async def _send(self, method: str, path: str, timeout: float, **kw: Any) -> Any:
         last = ""

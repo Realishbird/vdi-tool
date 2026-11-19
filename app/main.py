@@ -499,6 +499,11 @@ async def start_run(req: RunReq, request: Request):
     return {"id": r["id"]}
 
 
+@app.get("/api/runs/{rid}/go")
+async def run_go(rid: str):
+    return runs.go(rid)
+
+
 @app.post("/api/runs/{rid}/report/{vmid}")
 async def run_report(rid: str, vmid: str, body: dict):
     runs.report(rid, vmid, body)
