@@ -1,0 +1,567 @@
+{
+ "uid": "vdi-desktops",
+ "title": "VDI desktop drilldown",
+ "tags": [
+  "vdi-tool"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "30s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "desktop",
+    "label": "Desktop",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "vdi-prom"
+    },
+    "query": {
+     "query": "label_values(pve_guest_info, name)",
+     "refId": "v"
+    },
+    "refresh": 2,
+    "sort": 1,
+    "multi": true,
+    "includeAll": true,
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    }
+   }
+  ]
+ },
+ "annotations": {
+  "list": []
+ },
+ "editable": false,
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Desktops selected",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "count(pve_guest_info{name=~\"$desktop\"})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Running",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum(pve_up{id=~\"qemu/.*\"} * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}) or vector(0)",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Disk throughput, selected",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum((rate(pve_disk_read_bytes{id=~\"qemu/.*\"}[1m]) + rate(pve_disk_write_bytes{id=~\"qemu/.*\"}[1m])) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Network throughput, selected",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "none"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum((rate(pve_network_receive_bytes{id=~\"qemu/.*\"}[1m]) + rate(pve_network_transmit_bytes{id=~\"qemu/.*\"}[1m])) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"})",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "CPU per desktop",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     },
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "pve_cpu_usage_ratio{id=~\"qemu/.*\"} * 100 * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}",
+     "legendFormat": "{{name}}"
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Memory used per desktop",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 4,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     },
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "pve_memory_usage_bytes{id=~\"qemu/.*\"} / pve_memory_size_bytes{id=~\"qemu/.*\"} * 100 * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}",
+     "legendFormat": "{{name}}"
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Disk read per desktop",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 13,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(pve_disk_read_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}",
+     "legendFormat": "{{name}}"
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Disk write per desktop",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 13,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(pve_disk_write_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}",
+     "legendFormat": "{{name}}"
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Network receive per desktop",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(pve_network_receive_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}",
+     "legendFormat": "{{name}}"
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "Network transmit per desktop",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 22,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(pve_network_transmit_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"}",
+     "legendFormat": "{{name}}"
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Spread across selected desktops: disk write (slowest, median, fastest)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 31,
+    "w": 24,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "min(rate(pve_disk_write_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"})",
+     "legendFormat": "Slowest"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "quantile(0.5, rate(pve_disk_write_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"})",
+     "legendFormat": "Median"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "max(rate(pve_disk_write_bytes{id=~\"qemu/.*\"}[1m]) * on(id) group_left(name) pve_guest_info{name=~\"$desktop\"})",
+     "legendFormat": "Fastest"
+    }
+   ]
+  }
+ ]
+}

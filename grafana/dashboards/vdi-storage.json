@@ -1,0 +1,875 @@
+{
+ "uid": "vdi-storage",
+ "title": "VDI storage and network links",
+ "description": "Needs prometheus-node-exporter on the Proxmox host (port 9100).",
+ "tags": [
+  "vdi-tool"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "15s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "port",
+    "label": "Network port",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "vdi-prom"
+    },
+    "query": {
+     "query": "label_values(node_network_receive_bytes_total{job=\"host\"}, device)",
+     "refId": "v"
+    },
+    "regex": "/^(?!lo$|veth|tap|fwbr|fwpr|fwln|vmbr|bonding_masters).*/",
+    "refresh": 2,
+    "sort": 1,
+    "multi": true,
+    "includeAll": true,
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    }
+   },
+   {
+    "name": "disk",
+    "label": "Disk",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "vdi-prom"
+    },
+    "query": {
+     "query": "label_values(node_disk_read_bytes_total{job=\"host\"}, device)",
+     "refId": "v"
+    },
+    "regex": "/^(nvme\\d+n\\d+|sd[a-z]+|dm-\\d+)$/",
+    "refresh": 2,
+    "sort": 1,
+    "multi": true,
+    "includeAll": true,
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    }
+   }
+  ]
+ },
+ "annotations": {
+  "list": []
+ },
+ "editable": false,
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Network in, selected ports",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bps"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum(rate(node_network_receive_bytes_total{job=\"host\",device=~\"$port\"}[1m])*8)",
+     "legendFormat": ""
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Network out, selected ports",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bps"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "sum(rate(node_network_transmit_bytes_total{job=\"host\",device=~\"$port\"}[1m])*8)",
+     "legendFormat": ""
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Share of 400 Gb/s ceiling",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "(sum(rate(node_network_receive_bytes_total{job=\"host\",device=~\"$port\"}[1m])*8) + sum(rate(node_network_transmit_bytes_total{job=\"host\",device=~\"$port\"}[1m])*8)) / 400e9 * 100",
+     "legendFormat": ""
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Host CPU waiting on storage",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 0,
+    "w": 6,
+    "h": 4
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "avg(rate(node_cpu_seconds_total{job=\"host\",mode=\"iowait\"}[1m])) * 100",
+     "legendFormat": ""
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Receive per port",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_network_receive_bytes_total{job=\"host\",device=~\"$port\"}[1m])*8",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Transmit per port",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 4,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_network_transmit_bytes_total{job=\"host\",device=~\"$port\"}[1m])*8",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Link speed per port",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 13,
+    "w": 8,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "node_network_speed_bytes{job=\"host\",device=~\"$port\"} * 8",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Errors and drops per port (per second)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 13,
+    "w": 16,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "pps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_network_receive_errs_total{job=\"host\",device=~\"$port\"}[1m])",
+     "legendFormat": "{{device}} receive errors"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_network_transmit_errs_total{job=\"host\",device=~\"$port\"}[1m])",
+     "legendFormat": "{{device}} transmit errors"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_network_receive_drop_total{job=\"host\",device=~\"$port\"}[1m])",
+     "legendFormat": "{{device}} receive drops"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_network_transmit_drop_total{job=\"host\",device=~\"$port\"}[1m])",
+     "legendFormat": "{{device}} transmit drops"
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Disk read throughput",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_disk_read_bytes_total{job=\"host\",device=~\"$disk\"}[1m])",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "Disk write throughput",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 22,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_disk_written_bytes_total{job=\"host\",device=~\"$disk\"}[1m])",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Disk IOPS (reads plus writes)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 31,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "iops",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_disk_reads_completed_total{job=\"host\",device=~\"$disk\"}[1m]) + rate(node_disk_writes_completed_total{job=\"host\",device=~\"$disk\"}[1m])",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 12,
+   "type": "timeseries",
+   "title": "Disk latency (average per operation)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 31,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_disk_read_time_seconds_total{job=\"host\",device=~\"$disk\"}[1m]) / rate(node_disk_reads_completed_total{job=\"host\",device=~\"$disk\"}[1m])",
+     "legendFormat": "{{device}} read"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_disk_write_time_seconds_total{job=\"host\",device=~\"$disk\"}[1m]) / rate(node_disk_writes_completed_total{job=\"host\",device=~\"$disk\"}[1m])",
+     "legendFormat": "{{device}} write"
+    }
+   ]
+  },
+  {
+   "id": 13,
+   "type": "timeseries",
+   "title": "Disk busy",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 40,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     },
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_disk_io_time_seconds_total{job=\"host\",device=~\"$disk\"}[1m]) * 100",
+     "legendFormat": "{{device}}"
+    }
+   ]
+  },
+  {
+   "id": 14,
+   "type": "timeseries",
+   "title": "Host CPU by kind of work",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 40,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "avg by (mode) (rate(node_cpu_seconds_total{job=\"host\",mode!=\"idle\"}[1m])) * 100",
+     "legendFormat": "{{mode}}"
+    }
+   ]
+  },
+  {
+   "id": 15,
+   "type": "timeseries",
+   "title": "Host memory",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 49,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "node_memory_MemTotal_bytes{job=\"host\"} - node_memory_MemAvailable_bytes{job=\"host\"}",
+     "legendFormat": "Used"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "node_memory_MemTotal_bytes{job=\"host\"}",
+     "legendFormat": "Total"
+    }
+   ]
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "Host load and pressure",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "vdi-prom"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 49,
+    "w": 12,
+    "h": 9
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "node_load1{job=\"host\"}",
+     "legendFormat": "Load, 1 min"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_pressure_io_waiting_seconds_total{job=\"host\"}[1m]) * 100",
+     "legendFormat": "Storage pressure %"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "vdi-prom"
+     },
+     "expr": "rate(node_pressure_cpu_waiting_seconds_total{job=\"host\"}[1m]) * 100",
+     "legendFormat": "CPU pressure %"
+    }
+   ]
+  }
+ ]
+}
