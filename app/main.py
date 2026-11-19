@@ -387,6 +387,19 @@ async def agent_script():
     return (ROOT / "agent" / "workload.py").read_text()
 
 
+@app.get("/agent/workload.ps1", response_class=PlainTextResponse)
+async def agent_script_windows():
+    return (ROOT / "agent" / "workload.ps1").read_text()
+
+
+@app.get("/agent/diskspd.exe")
+async def agent_diskspd():
+    f = deploy.STATE_DIR / "diskspd.exe"
+    if not f.is_file():
+        raise HTTPException(404, "DiskSpd is not installed in the tool yet; run Update to latest")
+    return FileResponse(f, media_type="application/octet-stream")
+
+
 @app.get("/agent/blob")
 async def agent_blob():
     """1 MB of incompressible data for the workload's download action."""
@@ -418,6 +431,57 @@ def _fill_after_deploy(bid: str) -> None:
 
 
 deploy.on_batch_ready.append(_fill_after_deploy)
+
+
+def _win_name(name: str) -> str:
+    """A valid Windows computer name (15 characters at most) that keeps the unique end of the VM name."""
+    clean = re.sub(r"[^A-Za-z0-9-]", "-", name)[-15:].strip("-")
+    return clean or "vdi"
+
+
+async def _rename_windows(b: dict) -> dict:
+    """Windows clones start with the template's computer name. Give each one its own, through the guest agent."""
+    sem = asyncio.Semaphore(8)
+
+    async def one(vm: dict) -> str | None:
+        want = _win_name(vm["name"])
+        ps = f"if ($env:COMPUTERNAME -ne '{want}') {{ Rename-Computer -NewName '{want}' -Force -Restart }}"
+        async with sem:
+            try:
+                for _ in range(60):  # a fresh clone may still be booting
+                    if await runs._agent_up(pve, vm):
+                        break
+                    await asyncio.sleep(5)
+                await pve.request("POST", f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent/exec",
+                                  command=["powershell.exe", "-NoProfile", "-Command", ps])
+                vm["hostname"] = want
+                return None
+            except PVEError as e:
+                return f"{vm['name']}: {e}"
+
+    results = await asyncio.gather(*(one(vm) for vm in b["vms"] if vm["status"] in ("running", "created")))
+    state.save()
+    errors = [r for r in results if r]
+    return {"ok": len(results) - len(errors), "failed": len(errors), "errors": errors[:5]}
+
+
+def _rename_after_deploy(bid: str) -> None:
+    b = state.data["batches"].get(bid)
+    if b and b.get("os") == "windows" and b.get("start"):
+        deploy.spawn(_rename_windows(b))
+
+
+deploy.on_batch_ready.append(_rename_after_deploy)
+
+
+@app.post("/api/batches/{bid}/rename")
+async def rename_batch(bid: str):
+    b = state.data["batches"].get(bid)
+    if not b or b["status"] not in ("ready", "partial"):
+        raise HTTPException(400, "batch not found or not ready")
+    if b.get("os") != "windows":
+        raise HTTPException(400, "Linux desktops already get their own name on first boot")
+    return await _rename_windows(b)
 
 
 class RunReq(BaseModel):
@@ -485,8 +549,10 @@ async def start_run(req: RunReq, request: Request):
     b = state.data["batches"].get(req.batch)
     if not b or b["status"] not in ("ready", "partial"):
         raise HTTPException(400, "batch not found or not ready")
-    if b.get("os") == "windows" and prof["kind"] != "bootstorm":
-        raise HTTPException(400, "Windows desktops only support the boot storm run for now")
+    if b.get("os") == "windows" and prof["kind"] not in ("bootstorm", "fio"):
+        raise HTTPException(400, "Windows desktops support the disk workloads and the boot storm for now")
+    if b.get("os") == "windows" and prof["kind"] == "fio" and not (deploy.STATE_DIR / "diskspd.exe").is_file():
+        raise HTTPException(400, "DiskSpd is not installed in the tool yet; run Update to latest and try again")
     if runs.active():
         raise HTTPException(409, "another run is in progress")
     if prof["kind"] in ("fill", "fio"):

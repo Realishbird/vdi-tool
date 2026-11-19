@@ -191,13 +191,23 @@ async def _exec(pve: PVE, vm: dict, command: list[str]) -> None:
     await pve.request("POST", f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent/exec", command=command)
 
 
-async def _why(pve: PVE, vm: dict) -> str:
+def _is_windows(r: dict) -> bool:
+    return (r.get("setup") or {}).get("os") == "windows"
+
+
+async def _why(pve: PVE, vm: dict, windows: bool = False) -> str:
     """Ask a silent desktop what its workload was doing, to explain a missing report."""
     base = f"/nodes/{vm['node']}/qemu/{vm['vmid']}/agent"
+    # No double quotes in this command: the guest agent's argument quoting on Windows mangles them.
+    wcmd = ("$p=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*run.ps1*-Spec*' }).Count; "
+            "'procs: ' + $p + ' agent, ' + @(Get-Process diskspd -ErrorAction SilentlyContinue).Count + ' diskspd'; "
+            "Get-ChildItem C:\\vdi-workload -ErrorAction SilentlyContinue | ForEach-Object { $_.Name + ' ' + $_.Length }; "
+            "Get-Content C:\\vdi-workload\\err.log -Tail 6 -ErrorAction SilentlyContinue")
     cmd = ("echo \"procs: $(pgrep -fc vdi-workload.py) agent, $(pgrep -xc fio) fio\"; "
            "ls -la --time-style=+%H:%M:%S /var/tmp/vdi-workload 2>&1 | tail -n 3; tail -c 300 /tmp/vdi-workload.log 2>&1")
     try:
-        pid = (await pve.request("POST", f"{base}/exec", command=["bash", "-c", cmd]))["pid"]
+        argv = ["powershell.exe", "-NoProfile", "-Command", wcmd] if windows else ["bash", "-c", cmd]
+        pid = (await pve.request("POST", f"{base}/exec", command=argv))["pid"]
         for _ in range(10):
             await asyncio.sleep(1)
             st = await pve.get(f"{base}/exec-status", pid=pid)
@@ -229,13 +239,25 @@ async def _workload(pve: PVE, r: dict) -> None:
                   f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
                   f"nohup python3 /tmp/vdi-workload.py --spec {spec} --duration {r['duration']} "
                   f"--report {url} --base {r['base']} --size-gb {r.get('size_gb', 1)} >/tmp/vdi-workload.log 2>&1 &")
+        d = "C:\\vdi-workload"
+        ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*vdi-workload\\run.ps1*-Spec*' "
+              "-and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
+              "Get-Process diskspd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; "
+              f"New-Item -ItemType Directory -Force -Path {d} | Out-Null; $ProgressPreference='SilentlyContinue'; "
+              f"Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Uri {r['base']}/agent/workload.ps1 -OutFile {d}\\run.ps1; "
+              f"Start-Process powershell.exe -WindowStyle Hidden -RedirectStandardOutput {d}\\out.log -RedirectStandardError {d}\\err.log "
+              f"-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{d}\\run.ps1','-Spec','{spec}',"
+              f"'-Duration','{r['duration']}','-Report','{url}','-Base','{r['base']}','-SizeGb','{r.get('size_gb', 1)}'")
         try:
             # A freshly deployed desktop may still be booting; give its guest agent time to answer.
             for _ in range(60):
                 if await _agent_up(pve, vm):
                     break
                 await asyncio.sleep(5)
-            await _exec(pve, vm, ["bash", "-c", script])
+            if _is_windows(r):
+                await _exec(pve, vm, ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
+            else:
+                await _exec(pve, vm, ["bash", "-c", script])
             vm["status"] = "starting"
         except PVEError as e:
             vm.update(status="failed", error=f"could not start the workload: {e}")
@@ -254,7 +276,7 @@ async def _workload(pve: PVE, r: dict) -> None:
         await _timed(r, vms, wait)
     finally:
         for vm in [v for v in vms if v["status"] == "failed" and "could not start" not in v.get("error", "")][:10]:
-            why = await _why(pve, vm)
+            why = await _why(pve, vm, _is_windows(r))
             if why:
                 vm["error"] += " Desktop says: " + why
 

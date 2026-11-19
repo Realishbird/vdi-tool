@@ -115,7 +115,7 @@ function renderDeploy() {
     return `<div class="card batch"><div class="batch-head">
       <div><b>${esc(b.prefix)}-${esc(b.id)}</b> <span class="status-${esc(b.status)}">${esc(b.status)}</span>
         <div class="sub">${b.count} desktops · IDs ${b.first}-${b.last} · from ${esc(b.template_name || b.template)} · ${b.full ? "full" : "linked"} clones on ${esc(b.storage)} · ${b.custom_password ? "own password" : "template's password"}${b.fill_gb ? ` · fills ${b.fill_gb} GB each` : ""}${b.finished ? ` · deployed in ${Math.round(b.finished - b.created)}s` : ""}</div></div>
-      <div><button class="btn small" data-pw-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Set password</button>
+      <div>${b.os === "windows" ? `<button class="btn small" data-name-batch="${esc(b.id)}" ${busy ? "disabled" : ""} title="Give every Windows desktop its own computer name">Fix names</button> ` : ""}<button class="btn small" data-pw-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Set password</button>
       <button class="btn small danger" data-del-batch="${esc(b.id)}" ${busy ? "disabled" : ""}>Delete batch</button></div></div>
       ${meter(parts, done, b.count, `${done} of ${b.count} ready${failed ? `, ${failed} failed` : ""}`, true)}
       ${b.errors.length ? `<div class="errs">${esc(b.errors.join("\n"))}</div>` : ""}</div>`;
@@ -302,6 +302,11 @@ document.addEventListener("click", async (e) => {
   try {
     if (t.delProf) { await api("DELETE", `/api/profiles/${t.delProf}`); load(); }
     if (t.delRun && window.confirm("Delete this run and its results?")) { await api("DELETE", `/api/runs/${t.delRun}`); load(); }
+    if (t.nameBatch && window.confirm("Rename every Windows desktop in this batch to match its VM name? Each renamed desktop restarts once.")) {
+      const r = await api("POST", `/api/batches/${t.nameBatch}/rename`);
+      if (r.failed) throw new Error(`Renamed ${r.ok} desktops, ${r.failed} failed. ${r.errors.join(" | ")}`);
+      window.alert(`${r.ok} desktops are being renamed and will restart.`);
+    }
     if (t.pwBatch) {
       const pw = window.prompt('New password for user "vdi" on every running desktop in this batch (5 characters or more):');
       if (pw) { const r = await api("POST", `/api/batches/${t.pwBatch}/password`, { password: pw }); if (r.failed) throw new Error(`Password set on ${r.ok} desktops, ${r.failed} failed. ${r.errors.join(" | ")}`); window.alert(`Password set on ${r.ok} desktops.`); load(); }
