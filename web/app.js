@@ -182,7 +182,9 @@ function renderBench() {
   opts($("#f-profile"), Object.entries(bench.profiles));
   $("#custom-profiles").innerHTML = bench.custom.length ? `<table class="table" style="margin-top:14px"><tr><th>Your workloads</th><th></th></tr>` +
     bench.custom.map((id) => `<tr><td>${esc(bench.profiles[id])}</td><td><button class="btn small danger" data-del-prof="${esc(id)}">Delete</button></td></tr>`).join("") + "</table>" : "";
-  opts($("#f-rbatch"), dep.batches.filter((b) => b.status === "ready" || b.status === "partial").map((b) => [b.id, `${b.prefix}-${b.id} · ${b.count} desktops on ${b.storage}`]));
+  const readyB = dep.batches.filter((b) => b.status === "ready" || b.status === "partial");
+  opts($("#f-rbatch"), [...readyB.map((b) => [b.id, `${b.prefix}-${b.id} · ${b.count} desktops on ${b.storage}`]),
+    ...(readyB.length > 1 ? [["__all__", `All ${readyB.length} batches at once · ${readyB.reduce((n, b) => n + b.count, 0)} desktops on ${[...new Set(readyB.map((b) => b.storage))].join(", ")}`]] : [])]);
   $("#runs").innerHTML = bench.runs.map((r) => {
     const s = r.summary || {}, c = r.counts, fin = (c.done || 0) + (c.failed || 0), total = Object.values(c).reduce((a, b) => a + b, 0);
     return `<div class="card run ${r.id === selRun ? "selected" : ""}" data-run="${esc(r.id)}"><div class="batch-head">
@@ -293,7 +295,14 @@ submitOnce($("#tmpl-form"), async (f) => { await api("POST", "/api/templates", f
 submitOnce($("#win-form"), async (f) => { await api("POST", "/api/templates", formData(f)); f.closest("details").open = false; f.password.value = ""; });
 submitOnce($("#batch-form"), async (f) => { await api("POST", "/api/batches", formData(f)); f.password.value = ""; });
 submitOnce($("#prof-form"), async (f) => { await api("POST", "/api/profiles", formData(f)); f.name.value = ""; });
-submitOnce($("#run-form"), async (f) => { const r = await api("POST", "/api/runs", formData(f)); if (r.id) selRun = r.id; runDetail = null; });
+submitOnce($("#run-form"), async (f) => {
+  const body = formData(f);
+  if (body.batch === "__all__") {  // one run across every ready batch, started at the same moment
+    const ids = dep.batches.filter((b) => b.status === "ready" || b.status === "partial").map((b) => b.id);
+    body.batch = ids[0]; body.batches = ids.slice(1);
+  }
+  const r = await api("POST", "/api/runs", body); if (r.id) selRun = r.id; runDetail = null;
+});
 document.addEventListener("click", async (e) => {
   const t = e.target.dataset;
   const card = e.target.closest(".run");

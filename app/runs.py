@@ -54,6 +54,7 @@ def all_profiles() -> dict[str, dict]:
 
 
 SAMPLE_EVERY = 10
+LATE_AFTER = 30  # seconds after the shared start
 runs: dict[str, dict] = {}
 
 
@@ -112,16 +113,31 @@ def setup_of(b: dict) -> dict:
 
 
 def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1, env: dict | None = None,
-           limit: int | None = None, series: str | None = None) -> dict:
+           limit: int | None = None, series: str | None = None, extra: list[str] | None = None) -> dict:
+    """extra: more batches to load at the same moment, for a combined result across several storages."""
     b = state.data["batches"][bid]
     vms = {str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued"}
            for vm in [v for v in b["vms"] if v["status"] in ("running", "created")][:limit]}
+    stores = [b["storage"]]
+    for other in extra or []:
+        ob = state.data["batches"][other]
+        stores.append(ob["storage"])
+        vms.update({str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued",
+                                      "storage": ob["storage"]}
+                    for vm in ob["vms"] if vm["status"] in ("running", "created")})
+    if extra:
+        for vm in vms.values():
+            vm.setdefault("storage", b["storage"])
     spec = all_profiles()[profile]
     r = {"id": new_id(), "batch": bid, "batch_name": f"{b['prefix']}-{bid}", "profile": profile,
          "profile_name": spec["name"], "kind": spec["kind"], "spec": {k: spec[k] for k in ("kind", "fio") if k in spec},
          "duration": duration, "ramp": ramp, "base": base, "size_gb": size_gb, "status": "running", "created": time.time(),
          "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {},
          "setup": setup_of(b), "env": env or {}, "note": "", "tags": []}
+    if extra:
+        names = sorted(set(stores))
+        r.update(storage=" + ".join(names), batches=[bid, *extra], batch_name=f"{len(extra) + 1} batches")
+        r["setup"]["desktops"] = len(vms)
     if series:
         r["series"] = series
     runs[r["id"]] = r
@@ -140,6 +156,10 @@ def report(rid: str, vmid: str, body: dict[str, Any]) -> None:
             vm["status"] = kind
     elif kind == "started":
         vm["status"] = "running"
+        # A desktop that begins well after the shared start runs partly alone, so its
+        # number is not part of what the storage did under the full load.
+        if r.get("go_at") and time.time() - r["go_at"] > LATE_AFTER:
+            vm["late"] = True
     elif kind == "sample":
         # 10 second buckets of action latency across all desktops.
         k = str(int((time.time() - r["created"]) // SAMPLE_EVERY * SAMPLE_EVERY))
@@ -235,10 +255,17 @@ async def _workload(pve: PVE, r: dict) -> None:
         url = f"{r['base']}/api/runs/{r['id']}/report/{vm['vmid']}"
         spec = base64.b64encode(json.dumps(r["spec"]).encode()).decode()
         # Stop anything left over from an earlier run first, so two workloads never overlap.
-        script = ("pkill -f '^python3 /tmp/vdi-workload' ; pkill -x fio; "
+        # The workload runs as its own systemd unit. Started plainly it would belong to the guest
+        # agent's service, and a package upgrade that restarts that service kills it mid-run.
+        args = (f"--spec {spec} --duration {r['duration']} --report {url} --base {r['base']} "
+                f"--size-gb {r.get('size_gb', 1)}")
+        log = "/tmp/vdi-workload.log"
+        script = ("systemctl stop 'vdi-workload-*.service' 2>/dev/null; "
+                  "pkill -f '^(/usr/bin/)?python3 (-u )?/tmp/vdi-workload' ; pkill -x fio; "
                   f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
-                  f"nohup python3 /tmp/vdi-workload.py --spec {spec} --duration {r['duration']} "
-                  f"--report {url} --base {r['base']} --size-gb {r.get('size_gb', 1)} >/tmp/vdi-workload.log 2>&1 &")
+                  f"{{ systemd-run --quiet --collect --unit vdi-workload-{r['id']} -p StandardOutput=file:{log} "
+                  f"-p StandardError=file:{log} /usr/bin/python3 -u /tmp/vdi-workload.py {args} 2>/dev/null || "
+                  f"nohup python3 /tmp/vdi-workload.py {args} >{log} 2>&1 & }}")
         d = "C:\\vdi-workload"
         ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*vdi-workload\\run.ps1*-Spec*' "
               "-and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
@@ -258,7 +285,8 @@ async def _workload(pve: PVE, r: dict) -> None:
                 await _exec(pve, vm, ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
             else:
                 await _exec(pve, vm, ["bash", "-c", script])
-            vm["status"] = "starting"
+            if vm["status"] == "queued":  # a fast desktop may already have reported; never step backwards
+                vm["status"] = "starting"
         except PVEError as e:
             vm.update(status="failed", error=f"could not start the workload: {e}")
 
@@ -301,6 +329,7 @@ async def _timed(r: dict, vms: list[dict], wait) -> None:
                 break
             await asyncio.sleep(2)
         r["go"] = True
+        r["go_at"] = time.time()
         r["measure_from"] = round(time.time() - r["created"])
         await wait(r["duration"] + 180, ("prepared", "running"))
     else:
@@ -338,9 +367,12 @@ async def _bootstorm(pve: PVE, r: dict) -> None:
 
 
 def summarize(r: dict) -> dict:
-    done = [vm["result"] for vm in r["vms"].values() if vm["status"] == "done" and vm.get("result")]
+    done = [vm["result"] for vm in r["vms"].values() if vm["status"] == "done" and vm.get("result") and not vm.get("late")]
     out: dict[str, Any] = {"desktops": len(r["vms"]), "completed": len(done),
                            "failed": sum(vm["status"] == "failed" for vm in r["vms"].values())}
+    late = sum(1 for vm in r["vms"].values() if vm.get("late"))
+    if late:
+        out["late"] = late
     if not done:
         return out
     p = r["kind"]
@@ -374,6 +406,18 @@ def summarize(r: dict) -> dict:
     if r["samples"]:
         timed = [s for s in r["samples"] if s["t"] >= r.get("measure_from", 0)] or r["samples"]
         out["peak_host_cpu"] = max(s["host_cpu"] for s in timed)
+    stores = sorted({vm["storage"] for vm in r["vms"].values() if vm.get("storage")})
+    if p == "fio" and len(stores) > 1:
+        # A run across several storages: the same totals, split per storage.
+        by = {}
+        for st in stores:
+            mine = [vm for vm in r["vms"].values() if vm.get("storage") == st]
+            res = [vm["result"] for vm in mine if vm["status"] == "done" and vm.get("result") and not vm.get("late")]
+            mb = sum(d.get("mbps", d["read"]["mbps"] + d["write"]["mbps"]) for d in res)
+            by[st] = {"desktops": len(mine), "completed": len(res), "total_iops": sum(d["iops"] for d in res),
+                      "total_mbps": round(mb), "total_gbit": round(mb * 8 / 1000, 2),
+                      "p95_ms": round(sum(max(d["read"].get("p95_ms", 0), d["write"].get("p95_ms", 0)) for d in res) / len(res), 2) if res else 0}
+        out["by_storage"] = by
     return out
 
 
@@ -407,6 +451,8 @@ def validity(r: dict) -> dict:
         problems.append(f"{failed} of {total} desktops failed, so the totals understate what the full batch would do.")
     elif failed:
         notes.append(f"{failed} of {total} desktops failed; totals cover the other {total - failed}.")
+    if s.get("late"):
+        notes.append(f"{s['late']} of {total} desktops started late and ran partly alone; they are left out of the totals.")
     if r["kind"] == "fio" and s.get("completed"):
         if "measure_from" not in r:
             problems.append("This run predates the fix that writes real test data. Reads may have returned zeros "
