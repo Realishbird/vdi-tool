@@ -648,6 +648,7 @@ class RunReq(BaseModel):
     ramp: int = Field(0, ge=0, le=3600)
     size_gb: int = Field(1, ge=1, le=2000)  # per desktop: fio file size, or data to write for Fill disk
     steps: str | None = Field(None, pattern=r"^\s*\d+(\s*,\s*\d+){1,11}\s*$")  # density test: desktop counts, e.g. 10,25,50,100
+    batches: list[str] = Field(default_factory=list, max_length=32)  # more batches to load at the same moment
 
 
 @app.get("/api/runs")
@@ -712,6 +713,19 @@ async def start_run(req: RunReq, request: Request):
         raise HTTPException(400, "DiskSpd is not installed in the tool yet; run Update to latest and try again")
     if runs.active():
         raise HTTPException(409, "another run is in progress")
+    extra = [x for x in dict.fromkeys(req.batches) if x != req.batch]
+    if extra:
+        if req.steps or prof["kind"] not in ("fio", "office", "cpu"):
+            raise HTTPException(400, "several batches at once works for the disk, office and CPU workloads, without density steps")
+        for x in extra:
+            ob = state.data["batches"].get(x)
+            if not ob or ob["status"] not in ("ready", "partial"):
+                raise HTTPException(400, f"batch {x} not found or not ready")
+            if ob.get("os", "linux") != b.get("os", "linux"):
+                raise HTTPException(400, "all batches in one run must be the same kind of desktop (Linux or Windows)")
+            if prof["kind"] == "fio":
+                n = sum(vm["status"] in ("running", "created") for vm in ob["vms"])
+                await _check_capacity(ob["storage"], ob["template_node"], n, req.size_gb)
     if prof["kind"] in ("fill", "fio"):
         n = sum(vm["status"] in ("running", "created") for vm in b["vms"])
         await _check_capacity(b["storage"], b["template_node"], n, req.size_gb)
@@ -727,7 +741,7 @@ async def start_run(req: RunReq, request: Request):
         deploy.spawn(runs.execute_series(pve, sid, steps, lambda n: runs.create(
             req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env, limit=n, series=sid)))
         return {"series": sid, "steps": steps}
-    r = runs.create(req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env)
+    r = runs.create(req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env, extra=extra)
     if not r["vms"]:
         runs.delete(r["id"])
         raise HTTPException(400, "the batch has no running desktops")

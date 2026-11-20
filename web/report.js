@@ -80,6 +80,15 @@ function banner(r) {
   return `<div class="banner ${cls}"><b>${title}</b>${cls === "valid" ? "All desktops completed and the checks passed." : `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`}</div>`;
 }
 
+// A run across several storages lists what each one carried at the same moment.
+const byStorage = (r) => {
+  const by = (r.summary || {}).by_storage;
+  if (!by) return "";
+  const rows = Object.entries(by).map(([st, v]) => `<tr><td><b>${esc(st)}</b></td><td class="num">${num(v.completed)} / ${num(v.desktops)}</td>
+    <td class="num">${num(v.total_mbps)}</td><td class="num">${num(v.total_gbit)}</td><td class="num">${num(v.total_iops)}</td><td class="num">${num(v.p95_ms)}</td></tr>`).join("");
+  return `<h2>By storage, all loaded at the same moment</h2><table><tr><th>Storage</th><th class="num">Desktops completed</th><th class="num">Throughput (MB/s)</th>
+    <th class="num">Gbit/s</th><th class="num">IOPS</th><th class="num">p95 latency (ms)</th></tr>${rows}</table>`;
+};
 const head = (r) => `<p class="sub">Run ${esc(r.id)} · ${esc(when(r.created))} · ${esc(r.storage)}${r.setup?.clone ? ` · ${esc(r.setup.clone)} clones` : ""}</p>
   ${(r.tags || []).length ? `<div class="tags">${r.tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
   ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}`;
@@ -123,6 +132,7 @@ function single(r) {
   return `<h1>${esc(r.profile_name)}</h1>${head(r)}${banner(r)}
     ${r.verdict ? `<p class="verdict"><b>What limited this run:</b> ${esc(r.verdict)}</p>` : ""}
     <h2>Key results</h2><div class="tiles">${tiles || '<p class="muted">No results.</p>'}</div>
+    ${byStorage(r)}
     <div class="two"><div><h2>Test setup</h2>${kv(setupRows(r))}</div><div><h2>Environment</h2>${kv(envRows(r))}
       ${sp.key ? `<h2>Spread across desktops: ${esc(sp.label)}</h2>${kv([["Lowest", num(sp.min)], ["Median", num(sp.p50)], ["95th percentile", num(sp.p95)], ["Highest", num(sp.max)]])}` : ""}</div></div>
     ${charts ? `<h2>Over time</h2>${band ? '<p class="muted">The shaded band is the timed part of the run. Before it, desktops were writing their test files.</p>' : ""}<div class="charts">${charts}</div>` : ""}

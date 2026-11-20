@@ -112,16 +112,31 @@ def setup_of(b: dict) -> dict:
 
 
 def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb: int = 1, env: dict | None = None,
-           limit: int | None = None, series: str | None = None) -> dict:
+           limit: int | None = None, series: str | None = None, extra: list[str] | None = None) -> dict:
+    """extra: more batches to load at the same moment, for a combined result across several storages."""
     b = state.data["batches"][bid]
     vms = {str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued"}
            for vm in [v for v in b["vms"] if v["status"] in ("running", "created")][:limit]}
+    stores = [b["storage"]]
+    for other in extra or []:
+        ob = state.data["batches"][other]
+        stores.append(ob["storage"])
+        vms.update({str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued",
+                                      "storage": ob["storage"]}
+                    for vm in ob["vms"] if vm["status"] in ("running", "created")})
+    if extra:
+        for vm in vms.values():
+            vm.setdefault("storage", b["storage"])
     spec = all_profiles()[profile]
     r = {"id": new_id(), "batch": bid, "batch_name": f"{b['prefix']}-{bid}", "profile": profile,
          "profile_name": spec["name"], "kind": spec["kind"], "spec": {k: spec[k] for k in ("kind", "fio") if k in spec},
          "duration": duration, "ramp": ramp, "base": base, "size_gb": size_gb, "status": "running", "created": time.time(),
          "storage": b["storage"], "vms": vms, "samples": [], "latency": {}, "summary": {},
          "setup": setup_of(b), "env": env or {}, "note": "", "tags": []}
+    if extra:
+        names = sorted(set(stores))
+        r.update(storage=" + ".join(names), batches=[bid, *extra], batch_name=f"{len(extra) + 1} batches")
+        r["setup"]["desktops"] = len(vms)
     if series:
         r["series"] = series
     runs[r["id"]] = r
@@ -374,6 +389,18 @@ def summarize(r: dict) -> dict:
     if r["samples"]:
         timed = [s for s in r["samples"] if s["t"] >= r.get("measure_from", 0)] or r["samples"]
         out["peak_host_cpu"] = max(s["host_cpu"] for s in timed)
+    stores = sorted({vm["storage"] for vm in r["vms"].values() if vm.get("storage")})
+    if p == "fio" and len(stores) > 1:
+        # A run across several storages: the same totals, split per storage.
+        by = {}
+        for st in stores:
+            mine = [vm for vm in r["vms"].values() if vm.get("storage") == st]
+            res = [vm["result"] for vm in mine if vm["status"] == "done" and vm.get("result")]
+            mb = sum(d.get("mbps", d["read"]["mbps"] + d["write"]["mbps"]) for d in res)
+            by[st] = {"desktops": len(mine), "completed": len(res), "total_iops": sum(d["iops"] for d in res),
+                      "total_mbps": round(mb), "total_gbit": round(mb * 8 / 1000, 2),
+                      "p95_ms": round(sum(max(d["read"].get("p95_ms", 0), d["write"].get("p95_ms", 0)) for d in res) / len(res), 2) if res else 0}
+        out["by_storage"] = by
     return out
 
 
