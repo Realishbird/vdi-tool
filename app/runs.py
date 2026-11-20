@@ -54,6 +54,7 @@ def all_profiles() -> dict[str, dict]:
 
 
 SAMPLE_EVERY = 10
+LATE_AFTER = 30  # seconds after the shared start
 runs: dict[str, dict] = {}
 
 
@@ -155,6 +156,10 @@ def report(rid: str, vmid: str, body: dict[str, Any]) -> None:
             vm["status"] = kind
     elif kind == "started":
         vm["status"] = "running"
+        # A desktop that begins well after the shared start runs partly alone, so its
+        # number is not part of what the storage did under the full load.
+        if r.get("go_at") and time.time() - r["go_at"] > LATE_AFTER:
+            vm["late"] = True
     elif kind == "sample":
         # 10 second buckets of action latency across all desktops.
         k = str(int((time.time() - r["created"]) // SAMPLE_EVERY * SAMPLE_EVERY))
@@ -324,6 +329,7 @@ async def _timed(r: dict, vms: list[dict], wait) -> None:
                 break
             await asyncio.sleep(2)
         r["go"] = True
+        r["go_at"] = time.time()
         r["measure_from"] = round(time.time() - r["created"])
         await wait(r["duration"] + 180, ("prepared", "running"))
     else:
@@ -361,9 +367,12 @@ async def _bootstorm(pve: PVE, r: dict) -> None:
 
 
 def summarize(r: dict) -> dict:
-    done = [vm["result"] for vm in r["vms"].values() if vm["status"] == "done" and vm.get("result")]
+    done = [vm["result"] for vm in r["vms"].values() if vm["status"] == "done" and vm.get("result") and not vm.get("late")]
     out: dict[str, Any] = {"desktops": len(r["vms"]), "completed": len(done),
                            "failed": sum(vm["status"] == "failed" for vm in r["vms"].values())}
+    late = sum(1 for vm in r["vms"].values() if vm.get("late"))
+    if late:
+        out["late"] = late
     if not done:
         return out
     p = r["kind"]
@@ -403,7 +412,7 @@ def summarize(r: dict) -> dict:
         by = {}
         for st in stores:
             mine = [vm for vm in r["vms"].values() if vm.get("storage") == st]
-            res = [vm["result"] for vm in mine if vm["status"] == "done" and vm.get("result")]
+            res = [vm["result"] for vm in mine if vm["status"] == "done" and vm.get("result") and not vm.get("late")]
             mb = sum(d.get("mbps", d["read"]["mbps"] + d["write"]["mbps"]) for d in res)
             by[st] = {"desktops": len(mine), "completed": len(res), "total_iops": sum(d["iops"] for d in res),
                       "total_mbps": round(mb), "total_gbit": round(mb * 8 / 1000, 2),
@@ -442,6 +451,8 @@ def validity(r: dict) -> dict:
         problems.append(f"{failed} of {total} desktops failed, so the totals understate what the full batch would do.")
     elif failed:
         notes.append(f"{failed} of {total} desktops failed; totals cover the other {total - failed}.")
+    if s.get("late"):
+        notes.append(f"{s['late']} of {total} desktops started late and ran partly alone; they are left out of the totals.")
     if r["kind"] == "fio" and s.get("completed"):
         if "measure_from" not in r:
             problems.append("This run predates the fix that writes real test data. Reads may have returned zeros "
