@@ -280,7 +280,8 @@ async def _workload(pve: PVE, r: dict) -> None:
                 await _exec(pve, vm, ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps])
             else:
                 await _exec(pve, vm, ["bash", "-c", script])
-            vm["status"] = "starting"
+            if vm["status"] == "queued":  # a fast desktop may already have reported; never step backwards
+                vm["status"] = "starting"
         except PVEError as e:
             vm.update(status="failed", error=f"could not start the workload: {e}")
 
