@@ -250,10 +250,17 @@ async def _workload(pve: PVE, r: dict) -> None:
         url = f"{r['base']}/api/runs/{r['id']}/report/{vm['vmid']}"
         spec = base64.b64encode(json.dumps(r["spec"]).encode()).decode()
         # Stop anything left over from an earlier run first, so two workloads never overlap.
-        script = ("pkill -f '^python3 /tmp/vdi-workload' ; pkill -x fio; "
+        # The workload runs as its own systemd unit. Started plainly it would belong to the guest
+        # agent's service, and a package upgrade that restarts that service kills it mid-run.
+        args = (f"--spec {spec} --duration {r['duration']} --report {url} --base {r['base']} "
+                f"--size-gb {r.get('size_gb', 1)}")
+        log = "/tmp/vdi-workload.log"
+        script = ("systemctl stop 'vdi-workload-*.service' 2>/dev/null; "
+                  "pkill -f '^(/usr/bin/)?python3 (-u )?/tmp/vdi-workload' ; pkill -x fio; "
                   f"curl -fsS -m 30 {r['base']}/agent/workload.py -o /tmp/vdi-workload.py && "
-                  f"nohup python3 /tmp/vdi-workload.py --spec {spec} --duration {r['duration']} "
-                  f"--report {url} --base {r['base']} --size-gb {r.get('size_gb', 1)} >/tmp/vdi-workload.log 2>&1 &")
+                  f"{{ systemd-run --quiet --collect --unit vdi-workload-{r['id']} -p StandardOutput=file:{log} "
+                  f"-p StandardError=file:{log} /usr/bin/python3 -u /tmp/vdi-workload.py {args} 2>/dev/null || "
+                  f"nohup python3 /tmp/vdi-workload.py {args} >{log} 2>&1 & }}")
         d = "C:\\vdi-workload"
         ps = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*vdi-workload\\run.ps1*-Spec*' "
               "-and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
