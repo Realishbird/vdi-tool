@@ -166,11 +166,64 @@ def report(rid: str, vmid: str, body: dict[str, Any]) -> None:
         bucket = r["latency"].setdefault(k, [0.0, 0])
         bucket[0] += float(body.get("sum_ms", 0))
         bucket[1] += int(body.get("n", 0))
+    elif kind == "io":
+        # Per-second MB moved inside the desktop, put on this tool's clock (desktop clocks may be off).
+        skew = time.time() - float(body.get("now") or time.time())
+        per = r.setdefault("io", {}).setdefault(vm.get("storage") or r["storage"], {})
+        for ts, rd, wr in (body.get("points") or [])[:600]:
+            k = str(int(float(ts) + skew - r["created"]))
+            b = per.setdefault(k, [0.0, 0.0])
+            b[0], b[1] = round(b[0] + float(rd), 1), round(b[1] + float(wr), 1)
     elif kind == "result":
         vm.update(status="done", result=body.get("result", {}))
         vm.pop("error", None)
     elif kind == "error":
         vm.update(status="failed", error=str(body.get("error", ""))[:300])
+
+
+def _diskstats() -> dict[str, tuple[float, float]]:
+    """MB read and written since boot per block device, from the kernel the tool's container shares with the host."""
+    out = {}
+    try:
+        for line in open("/proc/diskstats"):
+            f = line.split()
+            out[f[2]] = (int(f[5]) * 512 / 1e6, int(f[9]) * 512 / 1e6)
+    except (OSError, ValueError, IndexError):
+        pass
+    return out
+
+
+async def _drive_map(pve: PVE, r: dict) -> dict[str, list[str]]:
+    """Which local drives sit behind each storage in the run (LVM storages only), read from Proxmox."""
+    stores = {vm.get("storage") or r["storage"] for vm in r["vms"].values()}
+    node = next(iter(r["vms"].values()))["node"]
+    try:
+        vgs = {c["name"]: [pv["name"].rsplit("/", 1)[-1] for pv in c.get("children", [])]
+               for c in (await pve.get(f"/nodes/{node}/disks/lvm")).get("children", [])}
+        conf = {x["storage"]: x for x in await pve.get("/storage")}
+    except (PVEError, KeyError, AttributeError, TypeError):
+        return {}
+    seen = _diskstats()
+    found = {st: [d for d in vgs.get(conf.get(st, {}).get("vgname", ""), []) if d in seen] for st in stores}
+    # All or nothing, so a total never mixes two ways of counting.
+    return found if all(found.values()) else {}
+
+
+async def _drives(pve: PVE, r: dict) -> None:
+    """Every second, record what each physical drive behind the run's storages moved."""
+    devs = await _drive_map(pve, r)
+    if not devs:
+        return
+    prev, at = _diskstats(), time.time()
+    while r["status"] == "running":
+        await asyncio.sleep(1)
+        now, t = _diskstats(), time.time()
+        k, dt = str(int(t - r["created"])), max(t - at, 0.2)
+        for st, names in devs.items():
+            rd = sum(now[d][0] - prev[d][0] for d in names if d in now and d in prev)
+            wr = sum(now[d][1] - prev[d][1] for d in names if d in now and d in prev)
+            r.setdefault("drives", {}).setdefault(st, {})[k] = [round(rd / dt, 1), round(wr / dt, 1)]
+        prev, at = now, t
 
 
 async def _sampler(pve: PVE, r: dict) -> None:
@@ -407,6 +460,13 @@ def summarize(r: dict) -> dict:
         timed = [s for s in r["samples"] if s["t"] >= r.get("measure_from", 0)] or r["samples"]
         out["peak_host_cpu"] = max(s["host_cpu"] for s in timed)
     stores = sorted({vm["storage"] for vm in r["vms"].values() if vm.get("storage")})
+    counted = io_totals(r) if p == "fio" else {}
+    if counted:
+        # Disk counters added up second by second: what the storage did while everyone was
+        # loading it together. This replaces the sum of per-desktop averages.
+        out.update(fio_sum_mbps=out["total_mbps"], total_mbps=counted["all"]["mbps"],
+                   total_gbit=round(counted["all"]["mbps"] * 8 / 1000, 2), peak_mbps=counted["all"]["peak"])
+        out["counted_by"] = "drives" if r.get("drives") else "desktops"
     if p == "fio" and len(stores) > 1:
         # A run across several storages: the same totals, split per storage.
         by = {}
@@ -417,12 +477,45 @@ def summarize(r: dict) -> dict:
             by[st] = {"desktops": len(mine), "completed": len(res), "total_iops": sum(d["iops"] for d in res),
                       "total_mbps": round(mb), "total_gbit": round(mb * 8 / 1000, 2),
                       "p95_ms": round(sum(max(d["read"].get("p95_ms", 0), d["write"].get("p95_ms", 0)) for d in res) / len(res), 2) if res else 0}
+        for st, v in by.items():
+            if st in counted:
+                v.update(total_mbps=counted[st]["mbps"], total_gbit=round(counted[st]["mbps"] * 8 / 1000, 2), peak_mbps=counted[st]["peak"])
         out["by_storage"] = by
     return out
 
 
+def io_series(r: dict) -> dict[str, list[list[float]]]:
+    """Per storage and for all of them: [second, read MB/s, write MB/s]. Taken from the physical drives'
+    own counters when the storage is local, otherwise from the counters inside the desktops."""
+    io = r.get("drives") or r.get("io") or {}
+    if not io:
+        return {}
+    secs = sorted({int(k) for per in io.values() for k in per})
+    out = {st: [[t, *per.get(str(t), [0.0, 0.0])] for t in range(secs[0], secs[-1] + 1)] for st, per in io.items()}
+    out["all"] = [[t, round(sum(io[st].get(str(t), [0, 0])[0] for st in io), 1), round(sum(io[st].get(str(t), [0, 0])[1] for st in io), 1)]
+                  for t in range(secs[0], secs[-1] + 1)]
+    return out
+
+
+def io_totals(r: dict) -> dict[str, dict]:
+    """Average over the shared timed window (5 s trimmed at each end) and the best 10 s."""
+    start, dur = r.get("measure_from"), r.get("duration", 0)
+    if start is None or dur < 20:
+        return {}
+    res = {}
+    for st, rows in io_series(r).items():
+        win = [rd + wr for t, rd, wr in rows if start + 5 <= t < start + dur - 5]
+        if len(win) < 10:
+            return {}
+        peak = max(sum(win[i:i + 10]) / 10 for i in range(len(win) - 9))
+        res[st] = {"mbps": round(sum(win) / (dur - 10)), "peak": round(peak)}
+    return res
+
+
 async def execute(pve: PVE, r: dict) -> None:
     spawn(_sampler(pve, r))
+    if r["kind"] == "fio":
+        spawn(_drives(pve, r))
     try:
         await (_bootstorm if r["kind"] == "bootstorm" else _workload)(pve, r)
         await asyncio.sleep(SAMPLE_EVERY)  # one last host sample
@@ -460,7 +553,12 @@ def validity(r: dict) -> dict:
         # Cross-check what the desktops claim against what Proxmox itself saw on their disks.
         seen = sorted(x.get("diskread", 0) + x.get("diskwrite", 0) for x in _timed_samples(r))
         host = seen[len(seen) // 2] if seen else 0
-        if s.get("total_mbps", 0) > 50 and host and s["total_mbps"] > 1.5 * host:
+        claimed = s.get("fio_sum_mbps", s.get("total_mbps", 0))
+        if s.get("fio_sum_mbps") and claimed > 1.15 * s["total_mbps"]:
+            notes.append(f"The desktops' own averages add up to {claimed:,} MB/s, but they did not all run at the same moment. "
+                         f"The throughput shown is what the {'drives' if s.get('counted_by') == 'drives' else 'desktops'} "
+                         "moved second by second during the shared window.")
+        if claimed > 50 and host and claimed > 1.5 * host and not s.get("fio_sum_mbps"):
             problems.append(f"Desktops reported {s['total_mbps']:,} MB/s but Proxmox saw only about {round(host):,} MB/s "
                             "on their disks, so part of the I/O never reached the storage.")
     return {"level": "invalid" if problems else "warning" if notes else "valid", "problems": problems, "notes": notes}
@@ -506,7 +604,7 @@ def report_data(r: dict) -> dict:
     """Everything a report page needs for one run."""
     b = state.data["batches"].get(r["batch"])
     setup = r.get("setup") or (setup_of(b) if b else {})
-    return {**r, "setup": setup, "validity": validity(r), "verdict": verdict(r), "spread": spread(r),
+    return {**{k: v for k, v in r.items() if k not in ("io", "drives")}, "io_series": io_series(r), "setup": setup, "validity": validity(r), "verdict": verdict(r), "spread": spread(r),
             "env": r.get("env") or {}, "note": r.get("note", ""), "tags": r.get("tags", [])}
 
 

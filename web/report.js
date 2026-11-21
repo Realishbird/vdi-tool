@@ -9,7 +9,7 @@ const S1 = "#2f6fd0", S2 = "#c2500f";
 const METRICS = {
   completed: ["Desktops completed", true], failed: ["Desktops failed", false],
   total_iops: ["Total IOPS", true], iops_per_desktop: ["IOPS per desktop", true], total_mbps: ["Throughput (MB/s)", true],
-  total_gbit: ["Throughput (Gbit/s)", true], read_lat_ms: ["Avg read latency (ms)", false], write_lat_ms: ["Avg write latency (ms)", false],
+  total_gbit: ["Throughput (Gbit/s)", true], peak_mbps: ["Best 10 s (MB/s)", true], fio_sum_mbps: ["Sum of desktop averages (MB/s)", null], read_lat_ms: ["Avg read latency (ms)", false], write_lat_ms: ["Avg write latency (ms)", false],
   p50_ms: ["Latency p50 (ms)", false], p95_ms: ["Latency p95 (ms)", false], worst_p99_ms: ["Worst desktop p99 (ms)", false],
   max_lat_ms: ["Max latency (ms)", false], mean_ms: ["Avg action time (ms)", false], worst_desktop_ms: ["Slowest desktop avg (ms)", false],
   actions: ["Actions done", true], errors: ["Action errors", false], total_mb_per_s: ["Total hashed (MB/s)", true],
@@ -114,6 +114,9 @@ function single(r) {
     .map((k) => `<div class="tile ${headKeys.includes(k) ? "head" : ""}"><div class="label">${METRICS[k][0]}</div><div class="value">${num(s[k])}</div></div>`).join("");
   const charts = [
     r.kind === "office" ? chart("Action response time", "ms", [{ name: "Average", color: S1, points: lat }]) : "",
+    ...Object.entries(r.io_series || {}).sort(([x], [y]) => (x === "all") - (y === "all") || x.localeCompare(y)).filter(([k], _, all) => k === "all" || all.length > 2)
+      .map(([k, rows]) => chart(`${k === "all" ? "Disk throughput" : esc(k)}, per second, ${s.counted_by === "drives" ? "from the drives' own counters" : "counted inside the desktops"}`, "MB/s",
+        [{ name: "Read", color: S1, points: rows.map((x) => [x[0], x[1]]) }, { name: "Write", color: S2, points: rows.map((x) => [x[0], x[2]]) }], band)),
     chart("Desktop disk throughput, as Proxmox saw it", "MB/s", [{ name: "Read", color: S1, points: pts("diskread") }, { name: "Write", color: S2, points: pts("diskwrite") }], band),
     chart("Host CPU", "%", [{ name: "Host CPU", color: S1, points: pts("host_cpu") }], band),
     chart("Desktop vCPUs busy", "cores", [{ name: "vCPUs", color: S1, points: pts("vm_cpu") }], band),

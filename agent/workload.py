@@ -16,6 +16,7 @@ import multiprocessing
 import os
 import random
 import subprocess
+import threading
 import time
 import urllib.request
 import zlib
@@ -186,6 +187,34 @@ def _bs_factor(bssplit):
         return 1
 
 
+def _disk_mb():
+    """MB read and written so far by this desktop's real disks, from the kernel's own counters."""
+    rd = wr = 0
+    for dev in os.listdir("/sys/block"):
+        if dev.startswith(("loop", "ram", "dm-", "sr", "zram", "md")):
+            continue
+        try:
+            f = open(f"/sys/block/{dev}/stat").read().split()
+            rd, wr = rd + int(f[2]), wr + int(f[6])  # 512 byte sectors
+        except (OSError, ValueError, IndexError):
+            pass
+    return rd * 512 / 1e6, wr * 512 / 1e6
+
+
+def _io_reporter(report, stop):
+    """Send what the disks moved each second, so the harness can add all desktops up on one clock."""
+    last, points, sent = _disk_mb(), [], time.time()
+    while not stop.wait(1):
+        now = _disk_mb()
+        points.append([round(time.time(), 1), round(now[0] - last[0], 1), round(now[1] - last[1], 1)])
+        last = now
+        if time.time() - sent >= 5:
+            post(report, {"type": "io", "now": time.time(), "points": points})
+            points, sent = [], time.time()
+    if points:
+        post(report, {"type": "io", "now": time.time(), "points": points})
+
+
 def disk(duration, report, base):
     """Run fio with the settings in SPEC["fio"]; all jobs share one file of SIZE_GB.
 
@@ -222,7 +251,14 @@ def disk(duration, report, base):
             cmd.append(f"--rate_iops={r},{max(1, rate - r)}")
         else:
             cmd.append(f"--rate_iops={rate}")
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 120)
+    stop = threading.Event()
+    counter = threading.Thread(target=_io_reporter, args=(report, stop), daemon=True)
+    counter.start()
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 120)
+    finally:
+        stop.set()
+        counter.join(timeout=30)
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip()[-300:] or "fio failed")
     job = json.loads(out.stdout)["jobs"][0]

@@ -167,7 +167,7 @@ document.addEventListener("mousemove", (e) => {
 const SUMMARY_LABELS = {
   desktops: "Desktops", completed: "Completed", failed: "Failed", mean_ms: "Avg action time (ms)", p95_ms: "Worst p95 (ms)",
   worst_desktop_ms: "Slowest desktop avg (ms)", actions: "Actions done", errors: "Action errors", total_iops: "Total IOPS",
-  iops_per_desktop: "IOPS per desktop", total_mbps: "Throughput (MB/s)", total_gbit: "Throughput (Gbit/s)", read_lat_ms: "Read latency (ms)", write_lat_ms: "Write latency (ms)", worst_p99_ms: "Worst p99 latency (ms)",
+  iops_per_desktop: "IOPS per desktop", total_mbps: "Throughput (MB/s)", total_gbit: "Throughput (Gbit/s)", peak_mbps: "Best 10 s (MB/s)", fio_sum_mbps: "Sum of desktop averages (MB/s)", read_lat_ms: "Read latency (ms)", write_lat_ms: "Write latency (ms)", worst_p99_ms: "Worst p99 latency (ms)",
   total_mb_per_s: "Total hashed (MB/s)", mb_per_s_per_desktop: "Per desktop (MB/s)", mean_boot_s: "Avg boot (s)", p95_boot_s: "p95 boot (s)",
   all_up_s: "All desktops up (s)", written_gb: "Written this run (GB)", filled_gb_per_desktop: "Fill per desktop (GB)",
   total_write_mb_per_s: "Total write speed (MB/s)", stopped_early: "Stopped early", peak_host_cpu: "Peak host CPU (%)",
