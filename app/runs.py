@@ -214,16 +214,21 @@ async def _drives(pve: PVE, r: dict) -> None:
     devs = await _drive_map(pve, r)
     if not devs:
         return
-    prev, at = _diskstats(), time.time()
+    prev, last = _diskstats(), int(time.time() - r["created"])
     while r["status"] == "running":
         await asyncio.sleep(1)
-        now, t = _diskstats(), time.time()
-        k, dt = str(int(t - r["created"])), max(t - at, 0.2)
+        now, k = _diskstats(), int(time.time() - r["created"])
+        if k <= last:
+            continue
+        # A busy tool can skip a second: spread what moved over every second since the last sample,
+        # so nothing is lost and no second reads as zero.
         for st, names in devs.items():
-            rd = sum(now[d][0] - prev[d][0] for d in names if d in now and d in prev)
-            wr = sum(now[d][1] - prev[d][1] for d in names if d in now and d in prev)
-            r.setdefault("drives", {}).setdefault(st, {})[k] = [round(rd / dt, 1), round(wr / dt, 1)]
-        prev, at = now, t
+            rd = sum(now[d][0] - prev[d][0] for d in names if d in now and d in prev) / (k - last)
+            wr = sum(now[d][1] - prev[d][1] for d in names if d in now and d in prev) / (k - last)
+            per = r.setdefault("drives", {}).setdefault(st, {})
+            for t in range(last + 1, k + 1):
+                per[str(t)] = [round(rd, 1), round(wr, 1)]
+        prev, last = now, k
 
 
 async def _sampler(pve: PVE, r: dict) -> None:
