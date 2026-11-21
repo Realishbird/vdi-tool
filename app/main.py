@@ -715,8 +715,8 @@ async def start_run(req: RunReq, request: Request):
         raise HTTPException(409, "another run is in progress")
     extra = [x for x in dict.fromkeys(req.batches) if x != req.batch]
     if extra:
-        if req.steps or prof["kind"] not in ("fio", "office", "cpu"):
-            raise HTTPException(400, "several batches at once works for the disk, office and CPU workloads, without density steps")
+        if prof["kind"] not in ("fio", "office", "cpu"):
+            raise HTTPException(400, "several batches at once works for the disk, office and CPU workloads")
         for x in extra:
             ob = state.data["batches"].get(x)
             if not ob or ob["status"] not in ("ready", "partial"):
@@ -731,7 +731,8 @@ async def start_run(req: RunReq, request: Request):
         await _check_capacity(b["storage"], b["template_node"], n, req.size_gb)
     env, base = await _env(b), _ci_base(request)
     if req.steps:
-        have = sum(vm["status"] in ("running", "created") for vm in b["vms"])
+        # With several batches the steps count desktops per batch.
+        have = min(sum(vm["status"] in ("running", "created") for vm in state.data["batches"][x]["vms"]) for x in [req.batch, *extra])
         steps = sorted({int(x) for x in req.steps.split(",")})
         if prof["kind"] == "fill":
             raise HTTPException(400, "Fill disk cannot be run as a density test")
@@ -739,7 +740,7 @@ async def start_run(req: RunReq, request: Request):
             raise HTTPException(400, f"steps must be between 1 and {have}, the number of running desktops in the batch")
         sid = deploy.new_id()
         deploy.spawn(runs.execute_series(pve, sid, steps, lambda n: runs.create(
-            req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env, limit=n, series=sid)))
+            req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env, limit=n, series=sid, extra=extra)))
         return {"series": sid, "steps": steps}
     r = runs.create(req.batch, req.profile, req.duration, req.ramp, base, req.size_gb, env, extra=extra)
     if not r["vms"]:

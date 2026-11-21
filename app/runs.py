@@ -124,7 +124,7 @@ def create(bid: str, profile: str, duration: int, ramp: int, base: str, size_gb:
         stores.append(ob["storage"])
         vms.update({str(vm["vmid"]): {"vmid": vm["vmid"], "name": vm["name"], "node": vm["node"], "status": "queued",
                                       "storage": ob["storage"]}
-                    for vm in ob["vms"] if vm["status"] in ("running", "created")})
+                    for vm in [v for v in ob["vms"] if v["status"] in ("running", "created")][:limit]})
     if extra:
         for vm in vms.values():
             vm.setdefault("storage", b["storage"])
